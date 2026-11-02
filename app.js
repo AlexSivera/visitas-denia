@@ -217,6 +217,7 @@ function renderLogin() {
   tabs.hidden = true;
   app.innerHTML = `
     <section class="login">
+      <div class="marca"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></div>
       <p class="kicker">Visitas Dénia</p>
       <h1>Entrar</h1>
       <p class="muted">Te enviamos un enlace al correo. Ábrelo desde este mismo móvil.</p>
@@ -236,29 +237,27 @@ function renderHoy() {
     ...planDe().placements.filter(p => p.dia === dia).map(p => ({ ini: p.inicio, fin: p.inicio + p.duracion, id: p.prospectoId, fijo: false }))
   ].sort((a, b) => a.ini - b.ini);
   const siguiente = items.find(i => i.fin > min);
-  const cuerpo = items.length ? items.map(i => {
-    const clases = ["item", i.fijo ? "fijo" : "", i.fin <= min ? "pasado" : "", i === siguiente ? "siguiente" : ""].join(" ");
-    if (i.fijo) return `<article class="${clases}"><time>${fmt(i.ini)}–${fmt(i.fin)}</time><div><h2>${esc(i.txt)}</h2></div></article>`;
+  const cuerpo = items.length ? `<ol class="linea-tiempo">${items.map(i => {
+    const clases = ["tarjeta", i.fijo ? "fijo" : "visita", i.fin <= min ? "pasado" : "", i === siguiente ? "siguiente" : ""].join(" ");
+    const hora = `<time>${fmt(i.ini)}</time>`;
+    if (i.fijo) return `<li class="fila-hora">${hora}<div class="${clases}"><h2>${esc(i.txt)}</h2><p class="meta">${fmt(i.ini)}–${fmt(i.fin)}</p></div></li>`;
     const p = prospecto(i.id);
     if (!p) return "";
     const e = estado(p, dia, i.ini);
-    return `<article class="${clases}">
-      <time>${fmt(i.ini)}–${fmt(i.fin)}</time>
-      <div>
-        <h2>${esc(p.nombre)}</h2>
-        <p class="muted">${esc(p.tipo)} · ${esc(p.zona)}</p>
-        <p><span class="chip ${e.ok ? "ok" : "no"}">${e.texto}</span></p>
-        <div class="acciones">
-          <a class="boton principal" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
-          <a class="boton" href="#negocio/${esc(p.id)}">Abrir</a>
-        </div>
+    return `<li class="fila-hora">${hora}<div class="${clases}">
+      ${i === siguiente ? '<p class="etiqueta">Siguiente</p>' : ""}
+      <h2>${esc(p.nombre)}</h2>
+      <p class="meta">${esc(p.tipo)} · ${esc(p.zona)}</p>
+      <p style="margin-top:8px"><span class="chip ${e.ok ? "ok" : "no"}">${e.texto}</span></p>
+      <div class="acciones">
+        <a class="enlace-boton" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
+        <a class="boton" href="#negocio/${esc(p.id)}">Abrir</a>
       </div>
-    </article>`;
-  }).join("") : '<p class="muted">Hoy no tienes nada colocado.</p>';
+    </div></li>`;
+  }).join("")}</ol>` : `<div class="vacio"><p>Hoy no tienes nada colocado.</p><a href="#semana">Planificar la semana</a></div>`;
   app.innerHTML = `
-    <div class="cabecera"><div><p class="kicker">${DIAS[dia]} ${ahora.getDate()} ${MESES[ahora.getMonth()]}</p><h1>Hoy</h1></div></div>
-    <p class="estado-ciclo">Semana ${par === 0 ? "A" : "B"}</p>
-    <div class="lista-hoy">${cuerpo}</div>
+    <div class="hoy-cab"><p class="kicker">${DIAS[dia]} ${ahora.getDate()} ${MESES[ahora.getMonth()]}</p><h1>Hoy</h1><span class="chip-semana">Semana ${par === 0 ? "A" : "B"}</span></div>
+    <div>${cuerpo}</div>
     <p class="msg" id="msg">${esc(st.aviso)}</p>`;
 }
 
@@ -302,10 +301,12 @@ function renderSemana() {
       <div class="titulo"><strong>Semana ${par === 0 ? "A" : "B"}${planDe().invertida ? " · invertida" : ""}</strong>
         <span>${l.getDate()} ${MESES[l.getMonth()]} – ${dom.getDate()} ${MESES[dom.getMonth()]}</span></div>
       <button type="button" class="boton" data-accion="semana-next" aria-label="Semana siguiente">›</button>
-      <button type="button" class="boton" data-accion="semana-hoy">Hoy</button>
-      <button type="button" class="boton" data-accion="invertir">${planDe().invertida ? "Quitar inversión" : "Invertir ciclo"}</button>
+      <div class="acciones-semana">
+        <button type="button" class="boton" data-accion="semana-hoy">Hoy</button>
+        <button type="button" class="boton" data-accion="invertir">${planDe().invertida ? "Quitar inversión" : "Invertir ciclo"}</button>
+      </div>
     </div>
-    <p class="muted" style="font-size:13px;margin-bottom:8px">Arrastra un negocio a un hueco, o tócalo y después toca el hueco.</p>
+    <p class="ayuda">Arrastra un negocio a un hueco, o tócalo y después toca el hueco.</p>
     <div class="neg-lista">${negocios}</div>
     <div class="board-wrap"><div class="board">${tablero}</div></div>
     <p class="msg" id="msg">${esc(st.aviso)}</p>`;
