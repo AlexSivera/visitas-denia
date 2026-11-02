@@ -38,7 +38,7 @@ const st = {
 const app = document.getElementById("app");
 const tabs = document.getElementById("tabs");
 
-const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = min => `${String(Math.floor(min / 60) % 24).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const clave = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const fechaCorta = iso => { const d = new Date(iso.slice(0, 10) + "T12:00"); return `${d.getDate()} ${MESES[d.getMonth()]}`; };
@@ -136,7 +136,7 @@ function pendientes() {
 function conflicto(dia, ini, fin) {
   for (const b of bloques(paridad())) if (b.dia === dia && b.ini < fin && ini < b.fin) return b.txt;
   for (const p of planDe().placements) {
-    if (p.dia === dia && p.inicio < fin && ini < p.inicio + p.duracion) return prospecto(p.prospectoId)?.nombre ?? "otro negocio";
+    if (p.dia === dia && p.inicio < fin && ini < p.inicio + p.duracion) return (prospecto(p.prospectoId) || {}).nombre || "otro negocio";
   }
   return null;
 }
@@ -300,7 +300,7 @@ function renderHoy() {
   ].sort((a, b) => a.ini - b.ini);
   const siguiente = items.find(i => i.fin > min);
   const visitas = items.filter(i => !i.fijo);
-  const hechas = visitas.filter(i => prospecto(i.id)?.ultimaVisita === hoyISO()).length;
+  const hechas = visitas.filter(i => (prospecto(i.id) || {}).ultimaVisita === hoyISO()).length;
   const marcaAhora = `<li class="fila-hora ahora" aria-label="Ahora"><time>${fmt(min)}</time><span class="linea-ahora">Ahora</span></li>`;
   let filas = items.map(i => {
     const clases = ["tarjeta", i.fijo ? "fijo" : "visita", i.fin <= min ? "pasado" : "", i === siguiente ? "siguiente" : ""].join(" ");
@@ -651,7 +651,8 @@ async function arrancar() {
   }
   st.listo = true;
   window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
-  movil.addEventListener("change", render);
+  if (movil.addEventListener) movil.addEventListener("change", render);
+  else if (movil.addListener) movil.addListener(render); // Safari y Chrome antiguos
   window.addEventListener("online", () => {
     aviso("Conexión recuperada.");
     if (st.sesion) cargarDatos().catch(() => {}).finally(() => { render(); vaciarCola(); });

@@ -35,6 +35,20 @@
     </button>
   </nav>
 
+  <script>
+    // Si algo falla al arrancar, se enseña el motivo en vez de quedarse en "Cargando…".
+    (function () {
+      function fallo(texto) {
+        var app = document.getElementById("app");
+        if (!app || !app.querySelector(".cargando")) return;
+        app.innerHTML = '<div class="vacio"><p>No se pudo abrir la app en este navegador.</p><p><small>' +
+          String(texto).replace(/[<>&]/g, "") + '</small></p><button type="button" class="boton" onclick="location.reload()">Reintentar</button></div>';
+      }
+      window.addEventListener("error", function (e) { fallo(e.message || "Error al cargar un archivo."); }, true);
+      window.addEventListener("unhandledrejection", function (e) { fallo((e.reason && e.reason.message) || e.reason || "Error al arrancar."); });
+      setTimeout(function () { fallo("Tarda demasiado en cargar. Comprueba la conexión y vuelve a intentarlo."); }, 15000);
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.50.0/dist/umd/supabase.js"></script>
   <script src="app.js"></script>
 </body>
