@@ -1,5 +1,5 @@
 // Cachea la app para que abra sin conexión. Los datos viven en localStorage (app.js), no aquí.
-const VERSION = "visitas-v1";
+const VERSION = "visitas-v2";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "manifest.json", "icon.svg"];
 
 self.addEventListener("install", e => {

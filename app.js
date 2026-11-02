@@ -25,6 +25,8 @@ const st = {
   planes: {},            // clave de semana (YYYY-MM-DD del lunes) -> { placements, invertida }
   cola: [],              // escrituras pendientes de enviar
   lunes: lunesDe(new Date()),
+  diaSel: (new Date().getDay() + 6) % 7, // día visible en Semana cuando la pantalla es estrecha
+  filtro: "todos",
   seleccion: null,
   notas: new Map(),
   fechas: new Map(),
@@ -45,7 +47,24 @@ const manana = () => clave(new Date(Date.now() + DAY));
 const byNombre = (a, b) => a.nombre.localeCompare(b.nombre, "es");
 const prospecto = id => st.prospectos.find(p => p.id === id);
 const mapsUrl = p => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((p.direccion || p.nombre) + ", Alicante, España")}`;
-const aviso = t => { st.aviso = t; const el = document.getElementById("msg"); if (el) el.textContent = t; };
+const movil = matchMedia("(max-width: 699px)");
+const diaDeHoy = () => (new Date().getDay() + 6) % 7;
+const minDeAhora = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+const telefono = p => { const m = String(p.horario || "").match(/(\+34\s?)?[6-9](?:\s?\d){8}/); return m ? m[0].replace(/\s/g, "") : null; };
+
+// En el login el mensaje se queda en la tarjeta; en el resto de vistas sale como aviso flotante que se va solo.
+let temporizadorAviso;
+const aviso = t => {
+  st.aviso = t;
+  const el = document.getElementById("msg");
+  if (el) { el.textContent = t; return; }
+  const toast = document.getElementById("toast");
+  if (!toast || !t) return;
+  toast.textContent = t;
+  toast.classList.add("visible");
+  clearTimeout(temporizadorAviso);
+  temporizadorAviso = setTimeout(() => toast.classList.remove("visible"), 3500);
+};
 
 function lunesDe(d) {
   const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -83,6 +102,37 @@ function estado(p, dia, min) {
   return { ok, texto: ok ? "abierto" : "cerrado" };
 }
 
+// Texto corto para una visita cerrada: cuándo abre ese día, si abre.
+function cuandoAbre(p, dia, min) {
+  if (!p || !p.semana) return "sin horario verificado";
+  const tramos = p.semana[dia] || [];
+  if (!tramos.length) return "no abre ese día";
+  const prox = tramos.find(([a]) => a > min);
+  return prox ? `abre ${fmt(prox[0])}` : "ya ha cerrado ese día";
+}
+
+// Estado en este momento, para la ficha.
+function estadoAhora(p) {
+  if (!p.semana) return { clase: "", texto: "Sin horario verificado" };
+  const dia = diaDeHoy(), min = minDeAhora(), tramos = p.semana[dia] || [];
+  const abierto = tramos.find(([a, b]) => min >= a && min < b);
+  if (abierto) return { clase: "ok", texto: `Abierto ahora · cierra ${fmt(abierto[1])}` };
+  const prox = tramos.find(([a]) => a > min);
+  return { clase: "no", texto: prox ? `Cerrado ahora · abre ${fmt(prox[0])}` : "Cerrado por hoy" };
+}
+
+// Primera visita colocada en la semana actual para un negocio (para la lista).
+function colocadoEstaSemana(id) {
+  const plan = st.planes[clave(lunesDe(new Date()))];
+  const p = plan && plan.placements.filter(x => x.prospectoId === id).sort((a, b) => a.dia - b.dia || a.inicio - b.inicio)[0];
+  return p ? `${LETRA[p.dia]} ${fmt(p.inicio)}` : null;
+}
+
+function pendientes() {
+  const n = st.cola.length;
+  return n ? `<span class="chip pendiente" title="Se enviará al recuperar la conexión">${n} sin sincronizar</span>` : "";
+}
+
 function conflicto(dia, ini, fin) {
   for (const b of bloques(paridad())) if (b.dia === dia && b.ini < fin && ini < b.fin) return b.txt;
   for (const p of planDe().placements) {
@@ -115,7 +165,7 @@ function encolar(op) {
   vaciarCola();
 }
 
-let vaciando = false;
+let vaciando = false, errorAvisado = false;
 async function vaciarCola() {
   if (vaciando || !st.sesion || !navigator.onLine) return;
   vaciando = true;
@@ -126,7 +176,9 @@ async function vaciarCola() {
       const { error } = op.tipo === "prospecto"
         ? await sb.from("prospectos").update({ data: op.data, updated_at: ahora }).eq("id", op.id)
         : await sb.from("plan").upsert({ semana: op.semana, placements: op.placements, invertida: op.invertida, updated_at: ahora });
-      if (error) { aviso("No se pudo guardar; se reintentará al volver la conexión."); break; }
+      // Se avisa una vez; el chip "sin sincronizar" de cada vista recuerda lo pendiente.
+      if (error) { if (!errorAvisado) aviso("No se pudo guardar; se reintentará al volver la conexión."); errorAvisado = true; break; }
+      errorAvisado = false;
       const idx = st.cola.indexOf(op);
       if (idx >= 0) st.cola.splice(idx, 1);
       guardarCola();
@@ -192,11 +244,16 @@ function colocar(id, col, e) {
 
 // ---------- Vistas ----------
 
+let vistaAnterior = "";
 function render() {
   if (!st.listo) return;
   if (!st.sesion && navigator.onLine) return renderLogin();
   tabs.hidden = false;
   const r = ruta();
+  // La animación de entrada solo al cambiar de pantalla, no en cada repintado.
+  const vista = `${r.vista}/${r.id || ""}`;
+  app.classList.toggle("entra", vista !== vistaAnterior);
+  vistaAnterior = vista;
   const actual = r.vista === "negocio" ? "negocios" : r.vista;
   tabs.querySelectorAll("button").forEach(b => {
     if (b.dataset.ir === actual) b.setAttribute("aria-current", "page");
@@ -242,85 +299,143 @@ function renderHoy() {
     ...planDe().placements.filter(p => p.dia === dia).map(p => ({ ini: p.inicio, fin: p.inicio + p.duracion, id: p.prospectoId, fijo: false }))
   ].sort((a, b) => a.ini - b.ini);
   const siguiente = items.find(i => i.fin > min);
-  const cuerpo = items.length ? `<ol class="linea-tiempo">${items.map(i => {
+  const visitas = items.filter(i => !i.fijo);
+  const hechas = visitas.filter(i => prospecto(i.id)?.ultimaVisita === hoyISO()).length;
+  const marcaAhora = `<li class="fila-hora ahora" aria-label="Ahora"><time>${fmt(min)}</time><span class="linea-ahora">Ahora</span></li>`;
+  let filas = items.map(i => {
     const clases = ["tarjeta", i.fijo ? "fijo" : "visita", i.fin <= min ? "pasado" : "", i === siguiente ? "siguiente" : ""].join(" ");
     const hora = `<time>${fmt(i.ini)}</time>`;
-    if (i.fijo) return `<li class="fila-hora">${hora}<div class="${clases}">${i === siguiente ? '<p class="etiqueta">Siguiente</p>' : ""}<h2>${esc(i.txt)}</h2><p class="meta">${fmt(i.ini)}–${fmt(i.fin)}</p></div></li>`;
+    const etiqueta = i === siguiente ? `<p class="etiqueta">${i.ini <= min ? "En curso" : "Siguiente"}</p>` : "";
+    if (i.fijo) return `<li class="fila-hora">${hora}<div class="${clases}">${etiqueta}<h2>${esc(i.txt)}</h2><p class="meta">${fmt(i.ini)}–${fmt(i.fin)}</p></div></li>`;
     const p = prospecto(i.id);
     if (!p) return "";
     const e = estado(p, dia, i.ini);
     return `<li class="fila-hora">${hora}<div class="${clases}">
-      ${i === siguiente ? '<p class="etiqueta">Siguiente</p>' : ""}
+      ${etiqueta}
       <h2>${esc(p.nombre)}</h2>
-      <p class="meta">${esc(p.tipo)} · ${esc(p.zona)}</p>
-      <p style="margin-top:8px"><span class="chip ${e.ok ? "ok" : "no"}">${e.texto}</span></p>
+      <p class="meta">${esc(p.tipo)} · ${esc(p.zona)} · ${fmt(i.ini)}–${fmt(i.fin)}</p>
+      <p class="estado-visita"><span class="chip ${e.ok ? "ok" : "no"}">${e.ok ? "abierto a esa hora" : "cerrado a esa hora"}</span>${e.ok ? "" : `<small>${cuandoAbre(p, dia, i.ini)}</small>`}</p>
       <div class="acciones">
         <a class="enlace-boton" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
-        <a class="boton" href="#negocio/${esc(p.id)}">Abrir</a>
+        <a class="boton" href="#negocio/${esc(p.id)}">Ficha</a>
       </div>
     </div></li>`;
-  }).join("")}</ol>` : `<div class="vacio"><p>Hoy no tienes nada colocado.</p><a href="#semana">Planificar la semana</a></div>`;
+  });
+  if (items.length) {
+    const pos = siguiente ? items.indexOf(siguiente) : items.length;
+    if (!siguiente || siguiente.ini > min) filas.splice(pos, 0, marcaAhora);
+  }
+  const resumen = visitas.length
+    ? `${visitas.length} visita${visitas.length > 1 ? "s" : ""} hoy${hechas ? ` · ${hechas} hecha${hechas > 1 ? "s" : ""}` : ""}`
+    : "Sin visitas hoy";
+  const cuerpo = items.length ? `<ol class="linea-tiempo">${filas.join("")}</ol>` : "";
+  const vacio = visitas.length ? "" : `<div class="vacio"><p>No hay visitas colocadas para hoy.</p><a class="boton" href="#semana">Planificar la semana</a></div>`;
   app.innerHTML = `
-    <div class="hoy-cab"><p class="kicker">${DIAS[dia]} ${ahora.getDate()} ${MESES[ahora.getMonth()]}</p><h1>Hoy</h1><span class="chip-semana">Semana ${par === 0 ? "A" : "B"}</span></div>
-    <div>${cuerpo}</div>
-    <p class="msg" id="msg">${esc(st.aviso)}</p>`;
+    <header class="hoy-cab">
+      <p class="kicker">${DIAS[dia]} ${ahora.getDate()} ${MESES[ahora.getMonth()]}</p>
+      <h1>Hoy</h1>
+      <div class="hoy-meta"><span class="chip-semana">Semana ${par === 0 ? "A" : "B"}</span><span class="muted">${resumen}</span>${pendientes()}</div>
+    </header>
+    ${cuerpo}
+    ${vacio}`;
 }
 
 function renderSemana() {
   const l = st.lunes, dom = new Date(l.getFullYear(), l.getMonth(), l.getDate() + 6), par = paridad();
+  const plan = planDe();
+  const actual = clave(l) === clave(lunesDe(new Date()));
+  const hoy = actual ? diaDeHoy() : -1;
+  const otra = par === 0 ? "B" : "A";
   const negocios = st.prospectos.slice().sort(byNombre).map(p => {
-    const n = planDe().placements.filter(x => x.prospectoId === p.id).length;
-    return `<button type="button" class="neg${st.seleccion === p.id ? " sel" : ""}" draggable="true" data-neg="${esc(p.id)}">
+    const n = plan.placements.filter(x => x.prospectoId === p.id).length;
+    return `<button type="button" class="neg${st.seleccion === p.id ? " sel" : ""}${n ? " colocado" : ""}" draggable="true" data-neg="${esc(p.id)}" aria-pressed="${st.seleccion === p.id}">
       <b>${esc(p.nombre)}</b><small>${p.semana ? "" : '<span class="sin">sin horario</span> · '}${n ? n + " colocado" + (n > 1 ? "s" : "") : esc(p.zona)}</small>
     </button>`;
   }).join("");
-  const alto = (END - START) / SLOT * ROW;
-  let tablero = '<div class="cab"></div>';
-  for (let d = 0; d < 7; d++) {
+
+  // En pantalla estrecha se ve un día cada vez, elegido en la tira de días; en ancha, la semana entera.
+  const unDia = movil.matches;
+  const dias = unDia ? [st.diaSel] : [0, 1, 2, 3, 4, 5, 6];
+  const tira = unDia ? `<div class="tira-dias" role="tablist" aria-label="Día">${[0, 1, 2, 3, 4, 5, 6].map(d => {
     const f = new Date(l.getFullYear(), l.getMonth(), l.getDate() + d);
-    tablero += `<div class="cab"><b>${LETRA[d]}</b><small>${f.getDate()}</small></div>`;
+    const puntos = plan.placements.filter(x => x.dia === d)
+      .map(x => `<i class="${estado(prospecto(x.prospectoId), d, x.inicio).ok ? "ok" : "no"}"></i>`).join("");
+    return `<button type="button" role="tab" class="dia${d === hoy ? " hoy" : ""}" data-accion="dia" data-dia="${d}" aria-selected="${d === st.diaSel}">
+      <small>${LETRA[d]}</small><b>${f.getDate()}</b><span class="puntos">${puntos}</span></button>`;
+  }).join("")}</div>` : "";
+
+  const alto = (END - START) / SLOT * ROW;
+  let tablero = "";
+  if (!unDia) {
+    tablero += '<div class="cab"></div>';
+    for (const d of dias) {
+      const f = new Date(l.getFullYear(), l.getMonth(), l.getDate() + d);
+      tablero += `<div class="cab${d === hoy ? " hoy" : ""}"><b>${LETRA[d]}</b><small>${f.getDate()}</small></div>`;
+    }
   }
   tablero += `<div class="horas" style="height:${alto}px">`;
-  for (let h = 7; h <= 22; h++) tablero += `<span style="top:${(h * 60 - START) / SLOT * ROW}px">${h}:00</span>`;
+  for (let h = 8; h <= 22; h++) tablero += `<span style="top:${(h * 60 - START) / SLOT * ROW}px">${h}:00</span>`;
   tablero += "</div>";
   const topDe = min => (min - START) / SLOT * ROW + 1;
   const altoDe = dur => dur / SLOT * ROW - 3;
-  for (let d = 0; d < 7; d++) {
-    tablero += `<div class="col${st.seleccion ? " objetivo" : ""}" data-dia="${d}" style="height:${alto}px">`;
+  const ahora = minDeAhora();
+  for (const d of dias) {
+    tablero += `<div class="col${st.seleccion ? " objetivo" : ""}${d === hoy ? " hoy" : ""}" data-dia="${d}" style="height:${alto}px">`;
+    if (d === hoy && ahora >= START && ahora < END) tablero += `<div class="ahora" style="top:${topDe(ahora)}px" aria-hidden="true"></div>`;
     for (const b of bloques(par).filter(x => x.dia === d)) {
       tablero += `<div class="bloque fijo" style="top:${topDe(b.ini)}px;height:${altoDe(b.fin - b.ini)}px"><strong>${esc(b.txt)}</strong><span>${fmt(b.ini)}–${fmt(b.fin)}</span></div>`;
     }
-    for (const p of planDe().placements.filter(x => x.dia === d)) {
+    for (const p of plan.placements.filter(x => x.dia === d)) {
       const pr = prospecto(p.prospectoId);
       if (!pr) continue;
       const e = estado(pr, d, p.inicio);
       tablero += `<div class="bloque ${e.ok ? "ok" : "no"}" style="top:${topDe(p.inicio)}px;height:${altoDe(p.duracion)}px">
-        <strong>${esc(pr.nombre)}</strong><span>${fmt(p.inicio)} · ${e.texto}</span>
+        <a href="#negocio/${esc(pr.id)}"><strong>${esc(pr.nombre)}</strong></a><span>${fmt(p.inicio)} · ${e.ok ? e.texto : e.texto + (pr.semana ? ", " + cuandoAbre(pr, d, p.inicio) : "")}</span>
         <button type="button" class="quitar" data-quitar="${esc(p.id)}" aria-label="Quitar ${esc(pr.nombre)}">×</button></div>`;
     }
     tablero += "</div>";
   }
+
+  const sel = st.seleccion && prospecto(st.seleccion);
+  const barraSel = sel
+    ? `<div class="seleccion-bar" role="status"><span>Colocando <b>${esc(sel.nombre)}</b>. Toca un hueco${unDia ? " de este día" : ""}.</span><button type="button" class="boton pequeno" data-accion="cancelar-sel">Cancelar</button></div>`
+    : "";
+  const ayuda = !sel && !plan.placements.length ? `<p class="ayuda">Toca un negocio y después un hueco${unDia ? "" : ", o arrástralo"}.</p>` : "";
+
   app.innerHTML = `
     <div class="semana-bar">
-      <button type="button" class="boton" data-accion="semana-prev" aria-label="Semana anterior">‹</button>
-      <div class="titulo"><strong>Semana ${par === 0 ? "A" : "B"}${planDe().invertida ? " · invertida" : ""}</strong>
-        <span>${l.getDate()} ${MESES[l.getMonth()]} – ${dom.getDate()} ${MESES[dom.getMonth()]}</span></div>
-      <button type="button" class="boton" data-accion="semana-next" aria-label="Semana siguiente">›</button>
-      <div class="acciones-semana">
-        <button type="button" class="boton" data-accion="semana-hoy">Hoy</button>
-        <button type="button" class="boton" data-accion="invertir">${planDe().invertida ? "Quitar inversión" : "Invertir ciclo"}</button>
+      <button type="button" class="boton icono-boton" data-accion="semana-prev" aria-label="Semana anterior">‹</button>
+      <div class="titulo">
+        <strong>Semana ${par === 0 ? "A" : "B"}${plan.invertida ? " <em>cambiada</em>" : ""}</strong>
+        <span>${l.getDate()} ${MESES[l.getMonth()]} – ${dom.getDate()} ${MESES[dom.getMonth()]}</span>
       </div>
+      <button type="button" class="boton icono-boton" data-accion="semana-next" aria-label="Semana siguiente">›</button>
     </div>
-    <p class="ayuda">Arrastra un negocio a un hueco, o tócalo y después toca el hueco.</p>
+    <div class="semana-opciones">
+      ${actual ? "" : '<button type="button" class="enlace" data-accion="semana-hoy">Ir a esta semana</button>'}
+      <button type="button" class="enlace" data-accion="invertir">${plan.invertida ? `Volver a semana ${otra}` : `Usar semana ${otra}`}</button>
+      ${pendientes()}
+    </div>
+    ${ayuda}
     <div class="neg-lista">${negocios}</div>
-    <div class="board-wrap"><div class="board">${tablero}</div></div>
-    <p class="msg" id="msg">${esc(st.aviso)}</p>`;
+    ${barraSel}
+    ${tira}
+    <div class="board-wrap${unDia ? " un-dia" : ""}"><div class="board${unDia ? " dia-unico" : ""}">${tablero}</div></div>`;
 }
 
+const FILTROS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["volver", "Volver"], ["visitado", "Visitados"], ["no_interesado", "No interesados"]];
+const filtroDe = p => p.resultado || "pendiente";
+
 function renderNegocios() {
+  const cuenta = f => f === "todos" ? st.prospectos.length : st.prospectos.filter(p => filtroDe(p) === f).length;
+  const visitados = cuenta("visitado");
   app.innerHTML = `
-    <div class="cabecera"><div><p class="kicker">${st.prospectos.length} negocios</p><h1>Negocios</h1></div></div>
-    <input class="buscar" id="buscar" type="search" placeholder="Buscar por nombre o zona" value="${esc(st.busqueda)}" aria-label="Buscar negocio">
+    <div class="cabecera"><div><p class="kicker">${st.prospectos.length} negocios · ${visitados} visitado${visitados === 1 ? "" : "s"}</p><h1>Negocios</h1></div>${pendientes()}</div>
+    <input class="buscar" id="buscar" type="search" placeholder="Buscar por nombre, tipo o zona" value="${esc(st.busqueda)}" aria-label="Buscar negocio">
+    <div class="filtros" role="group" aria-label="Filtrar por resultado">${FILTROS.map(([f, t]) => {
+      const n = cuenta(f);
+      return f !== "todos" && !n ? "" : `<button type="button" class="filtro" data-accion="filtro" data-filtro="${f}" aria-pressed="${st.filtro === f}">${t} <span>${n}</span></button>`;
+    }).join("")}</div>
     <div id="lista-negocios"></div>`;
   pintarListaNegocios();
 }
@@ -328,12 +443,19 @@ function renderNegocios() {
 function pintarListaNegocios() {
   const q = st.busqueda.trim().toLowerCase();
   const lista = st.prospectos.slice().sort(byNombre)
+    .filter(p => st.filtro === "todos" || filtroDe(p) === st.filtro)
     .filter(p => !q || `${p.nombre} ${p.zona} ${p.tipo}`.toLowerCase().includes(q));
-  document.getElementById("lista-negocios").innerHTML = lista.map(p => `
+  document.getElementById("lista-negocios").innerHTML = lista.map(p => {
+    const cuando = colocadoEstaSemana(p.id);
+    const lado = p.resultado
+      ? `<span class="chip ${p.resultado === "visitado" ? "ok" : p.resultado === "no_interesado" ? "no" : "aviso"}">${RES[p.resultado]}${p.resultado === "volver" && p.volverEl ? " · " + fechaCorta(p.volverEl) : ""}</span>`
+      : cuando ? `<span class="chip plan">${cuando}</span>` : '<span class="sin-colocar">Sin colocar</span>';
+    return `
     <a class="fila" href="#negocio/${esc(p.id)}">
-      <span><b>${esc(p.nombre)}</b><small>${esc(p.tipo)} · ${esc(p.zona)}</small></span>
-      <span class="chip ${p.resultado === "visitado" ? "ok" : p.resultado === "no_interesado" ? "no" : ""}">${p.resultado ? RES[p.resultado] : "Pendiente"}</span>
-    </a>`).join("") || '<p class="muted">Ningún negocio coincide.</p>';
+      <span><b>${esc(p.nombre)}</b><small>${esc(p.tipo)} · ${esc(p.zona)}${p.semana ? "" : ' · <span class="sin">sin horario</span>'}</small></span>
+      <span class="fila-lado">${lado}<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+    </a>`;
+  }).join("") || '<p class="vacio">Ningún negocio coincide.</p>';
 }
 
 function renderNegocio(id) {
@@ -345,44 +467,60 @@ function renderNegocio(id) {
   const estadoTxt = p.resultado
     ? `${RES[p.resultado]}${p.ultimaVisita ? " · " + fechaCorta(p.ultimaVisita) : ""}${p.volverEl ? " · volver el " + fechaCorta(p.volverEl) : ""}`
     : "Sin resultado todavía";
+  const ya = estadoAhora(p);
+  const tel = telefono(p);
+  const hechos = CHECK.filter((_, i) => marcas[i]).length;
+  const hoy = diaDeHoy();
+  const tabla = p.semana ? `<table class="horario">${DIAS.map((nombre, d) => {
+    const tramos = p.semana[d] || [];
+    const hasta = m => m === 1440 ? "24:00" : fmt(m);
+    return `<tr${d === hoy ? ' class="hoy"' : ""}><th scope="row">${nombre}</th><td>${tramos.length ? tramos.map(([a, b]) => `<span class="tramo">${fmt(a)}–${hasta(b)}</span>`).join("") : '<span class="muted">Cerrado</span>'}</td></tr>`;
+  }).join("")}</table>` : "";
+  const fuente = p.horarioVerificado === "google_maps" ? "Horario de Google Maps." : "";
+  const pulsado = r => `aria-pressed="${p.resultado === r}"`;
   app.innerHTML = `
-    <div class="cabecera"><div><p class="kicker"><a href="#negocios">Negocios</a> · ${esc(p.zona)}</p><h1>${esc(p.nombre)}</h1></div></div>
+    <a class="atras" href="#negocios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>Negocios</a>
+    <header class="ficha-cab">
+      <p class="kicker">${esc(p.tipo)} · ${esc(p.zona)}</p>
+      <h1>${esc(p.nombre)}</h1>
+      <p><span class="chip ${ya.clase}">${ya.texto}</span></p>
+    </header>
     <div class="ficha">
-      <a class="enlace-boton" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
+      <div class="acciones-ficha">
+        <a class="enlace-boton" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
+        ${tel ? `<a class="boton" href="tel:${esc(tel)}">Llamar</a>` : ""}
+        ${p.demoUrl ? `<a class="boton" href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Ver demo ↗</a>` : ""}
+      </div>
       <section class="panel">
-        <h3>Horario y visita</h3>
-        <p>${p.semana ? esc(p.horario) : '<span class="sin">Sin horario verificado.</span> ' + esc(p.horario)}</p>
-        <p><b>Ventana</b> ${esc(p.ventanaVisita)}</p>
-        <p class="muted">${esc(p.direccion || "")}</p>
+        <h3>Horario</h3>
+        ${tabla || `<p><span class="sin">Sin horario verificado.</span> ${esc(p.horario)}</p>`}
+        <p class="ventana"><b>Mejor momento para ir</b>${esc(p.ventanaVisita)}</p>
+        <p class="muted pequeno">${esc(p.direccion || "")}${p.direccion && fuente ? " · " : ""}${fuente}</p>
       </section>
       <section class="panel">
         <h3>Argumento</h3>
         <p class="arg">${esc(p.argumento)}</p>
-        ${p.demoUrl ? `<a class="boton" href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Abrir demo ↗</a>` : '<p class="muted">Sin demo publicada</p>'}
+        ${p.demoUrl ? "" : '<p class="muted pequeno">Sin demo publicada todavía.</p>'}
       </section>
+      ${p.guion ? `<section class="panel"><h3>Guion</h3><p class="guion">${esc(p.guion)}</p></section>` : ""}
       <section class="panel">
-        <h3>Guion</h3>
-        <p class="guion">${p.guion ? esc(p.guion) : '<span class="muted">Guion pendiente. Se escribirá a partir de la demo y de los datos verificados.</span>'}</p>
-      </section>
-      <section class="panel">
-        <h3>Checklist</h3>
+        <h3>En la visita <span class="progreso">${hechos}/${CHECK.length}</span></h3>
         <ul class="checks">${CHECK.map((t, i) => `<li><label><input type="checkbox" data-check="${i}" data-id="${esc(id)}" ${marcas[i] ? "checked" : ""}> ${t}</label></li>`).join("")}</ul>
       </section>
       <section class="panel">
         <h3>Resultado</h3>
-        <label class="muted">Nota
-          <textarea data-nota="${esc(id)}">${esc(nota)}</textarea>
-        </label>
         <div class="resultados">
-          <button type="button" class="boton ok" data-accion="visitado" data-id="${esc(id)}">Visitado</button>
-          <button type="button" class="boton" data-accion="volver" data-id="${esc(id)}">Volver otro día</button>
-          <button type="button" class="boton no" data-accion="no" data-id="${esc(id)}">No interesado</button>
+          <button type="button" class="boton ok" data-accion="visitado" data-id="${esc(id)}" ${pulsado("visitado")}>Visitado</button>
+          <button type="button" class="boton aviso" data-accion="volver" data-id="${esc(id)}" ${pulsado("volver")}>Volver otro día</button>
+          <button type="button" class="boton no" data-accion="no" data-id="${esc(id)}" ${pulsado("no_interesado")}>No interesado</button>
         </div>
-        ${st.volver.has(id) ? `<div class="fecha"><label>Volver el <input type="date" data-fecha="${esc(id)}" value="${fecha}"></label><button type="button" class="boton" data-accion="volver-guardar" data-id="${esc(id)}">Guardar</button></div>` : ""}
-        <p class="muted">${esc(estadoTxt)}</p>
-        ${p.resultado ? `<button type="button" class="boton pequeno" data-accion="deshacer" data-id="${esc(id)}">Quitar resultado</button>` : ""}
+        ${st.volver.has(id) ? `<div class="fecha"><label>Volver el <input type="date" data-fecha="${esc(id)}" value="${fecha}"></label><button type="button" class="boton principal" data-accion="volver-guardar" data-id="${esc(id)}">Guardar</button></div>` : ""}
+        <label class="nota">Nota
+          <textarea data-nota="${esc(id)}" placeholder="Con quién hablaste, qué te dijo…">${esc(nota)}</textarea>
+        </label>
+        <p class="estado-resultado"><span class="muted">${esc(estadoTxt)}</span>${p.resultado ? `<button type="button" class="enlace" data-accion="deshacer" data-id="${esc(id)}">Quitar resultado</button>` : ""}</p>
       </section>
-      <p class="msg" id="msg">${esc(st.aviso)}</p>
+      ${p.guion ? "" : '<p class="muted pequeno nota-guion">Guion pendiente: se escribirá a partir de la demo y de los datos verificados.</p>'}
     </div>`;
 }
 
@@ -391,10 +529,10 @@ function renderNegocio(id) {
 app.addEventListener("click", async e => {
   const b = e.target.closest("[data-accion]");
   if (b) return accion(b);
+  if (e.target.closest("a")) return;
   const neg = e.target.closest("[data-neg]");
   if (neg) {
     st.seleccion = st.seleccion === neg.dataset.neg ? null : neg.dataset.neg;
-    aviso(st.seleccion ? `Toca un hueco para colocar ${prospecto(st.seleccion)?.nombre}.` : "");
     return render();
   }
   const q = e.target.closest("[data-quitar]");
@@ -415,6 +553,13 @@ app.addEventListener("change", e => {
     if (!p) return;
     const arr = CHECK.map((_, i) => i === +t.dataset.check ? t.checked : !!(p.checklist || [])[i]);
     actualizarProspecto(id, { checklist: arr });
+    const progreso = app.querySelector(".progreso");
+    if (progreso) progreso.textContent = `${arr.filter(Boolean).length}/${CHECK.length}`;
+  }
+  // La nota se guarda al salir del campo, sin depender de pulsar un resultado.
+  if (t.matches("[data-nota]") && prospecto(t.dataset.nota) && (prospecto(t.dataset.nota).nota || "") !== t.value) {
+    actualizarProspecto(t.dataset.nota, { nota: t.value });
+    aviso("Nota guardada.");
   }
   if (t.matches("[data-fecha]")) st.fechas.set(t.dataset.fecha, t.value);
 });
@@ -447,8 +592,14 @@ async function accion(b) {
     await cargarPlan(st.lunes);
     return render();
   }
-  if (a === "semana-hoy") { st.lunes = lunesDe(new Date()); await cargarPlan(st.lunes); return render(); }
-  if (a === "invertir") return guardarPlan(planDe().placements, !planDe().invertida);
+  if (a === "semana-hoy") { st.lunes = lunesDe(new Date()); st.diaSel = diaDeHoy(); await cargarPlan(st.lunes); return render(); }
+  if (a === "invertir") {
+    guardarPlan(planDe().placements, !planDe().invertida);
+    return aviso(`Esta semana cuenta como semana ${paridad() === 0 ? "A" : "B"}.`);
+  }
+  if (a === "dia") { st.diaSel = +b.dataset.dia; return render(); }
+  if (a === "cancelar-sel") { st.seleccion = null; return render(); }
+  if (a === "filtro") { st.filtro = b.dataset.filtro; return render(); }
   if (a === "entrar") return enviarEnlace();
 
   const p = prospecto(id);
@@ -499,7 +650,8 @@ async function arrancar() {
     vaciarCola();
   }
   st.listo = true;
-  window.addEventListener("hashchange", render);
+  window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
+  movil.addEventListener("change", render);
   window.addEventListener("online", () => {
     aviso("Conexión recuperada.");
     if (st.sesion) cargarDatos().catch(() => {}).finally(() => { render(); vaciarCola(); });
