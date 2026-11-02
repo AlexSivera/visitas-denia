@@ -92,10 +92,13 @@ a.boton { text-decoration: none; color: inherit; }
 }
 
 /* Login */
-.login { display: grid; gap: 14px; max-width: 420px; margin: 10vh auto 0; padding: 26px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--sombra); }
-.login .marca { width: 52px; height: 52px; border-radius: 16px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
-.login .marca svg { width: 28px; height: 28px; }
-.login h1 { font-size: 32px; }
+.login { max-width: 420px; margin: 6vh auto 0; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--sombra); overflow: hidden; }
+.login-marca { display: grid; gap: 6px; padding: 28px 26px 26px; background: var(--accent); color: var(--accent-fg); }
+.login-marca svg { width: 30px; height: 30px; margin-bottom: 14px; }
+.login-marca .kicker { color: inherit; opacity: .75; }
+.login-marca h1 { font-size: 52px; line-height: .95; letter-spacing: -.02em; }
+.login-cuerpo { display: grid; gap: 14px; padding: 24px 26px 26px; }
+.login-cuerpo h2 { font-size: 26px; }
 .login input {
   min-height: 52px; border: 1px solid var(--line); background: var(--bg); border-radius: 14px; padding: 0 16px; width: 100%;
 }
@@ -114,8 +117,16 @@ a.boton { text-decoration: none; color: inherit; }
 .tarjeta.visita { border-left: 4px solid var(--visita-fg); }
 .tarjeta.fijo { background: var(--fixed); color: var(--fixed-fg); border-color: transparent; box-shadow: none; }
 .tarjeta.pasado { opacity: .5; }
-.tarjeta.siguiente { border-color: var(--sel); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sel) 25%, transparent); }
+.tarjeta.siguiente { background: var(--accent); color: var(--accent-fg); border-color: transparent; box-shadow: 0 16px 36px -18px color-mix(in srgb, var(--accent) 70%, transparent); padding: 18px; }
+.tarjeta.siguiente h2 { font-size: 28px; line-height: 1.1; }
+.tarjeta.siguiente .meta { color: inherit; opacity: .75; }
+.tarjeta.siguiente .chip { background: color-mix(in srgb, var(--accent-fg) 14%, transparent); color: inherit; border-color: transparent; }
+.tarjeta.siguiente .chip.ok { background: var(--open); color: var(--open-fg); }
+.tarjeta.siguiente .chip.no { background: var(--closed); color: var(--closed-fg); }
+.tarjeta.siguiente .enlace-boton { background: var(--accent-fg); color: var(--accent); }
+.tarjeta.siguiente .boton { background: transparent; color: inherit; border-color: color-mix(in srgb, var(--accent-fg) 35%, transparent); }
 .tarjeta .etiqueta { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--sel); margin-bottom: 4px; }
+.tarjeta.siguiente .etiqueta { color: inherit; opacity: .7; }
 .tarjeta .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
 .tarjeta .acciones { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
 .tarjeta .acciones .boton, .tarjeta .acciones .enlace-boton { min-height: 46px; white-space: nowrap; }
@@ -200,6 +211,35 @@ textarea { min-height: 76px; resize: vertical; }
 .punto.visitado { background: var(--open-fg); }
 .punto.volver { background: var(--sel); }
 .punto.no_interesado { background: var(--closed-fg); }
+
+/* Movimiento: entrada suave al cambiar de vista y respuesta al toque */
+@keyframes entrar { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pulso { 50% { opacity: .4; } }
+#app > * { animation: entrar .35s cubic-bezier(.2, .7, .2, 1) both; }
+.cargando { animation: pulso 1.4s ease-in-out infinite; }
+.hoy-cab h1 { font-size: 40px; }
+
+.tabs button { transition: background-color .25s ease, color .25s ease, transform .15s ease; }
+.tabs button:active { transform: scale(.96); }
+.tabs .icono { transition: transform .25s cubic-bezier(.2, .7, .2, 1); }
+.tabs button[aria-current="page"] .icono { transform: translateY(-1px) scale(1.06); }
+
+.tarjeta, .fila, .neg, .panel, .boton { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease, background-color .2s ease; }
+.fila:active, .tarjeta:active, .neg:active { transform: scale(.985); }
+.fila:focus-visible, .neg:focus-visible, .boton:focus-visible { outline-offset: 3px; }
+
+@media (hover: hover) {
+  .fila:hover, .neg:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .05), 0 14px 30px -16px rgba(28, 27, 25, .3);
+  }
+  .tarjeta:hover { box-shadow: 0 2px 4px rgba(0, 0, 0, .05), 0 14px 30px -16px rgba(28, 27, 25, .3); }
+  .boton:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 
 @media (min-width: 900px) {
   body { max-width: 1100px; margin-inline: auto; }

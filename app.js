@@ -217,13 +217,18 @@ function renderLogin() {
   tabs.hidden = true;
   app.innerHTML = `
     <section class="login">
-      <div class="marca"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></div>
-      <p class="kicker">Visitas Dénia</p>
-      <h1>Entrar</h1>
-      <p class="muted">Te enviamos un enlace al correo. Ábrelo desde este mismo móvil.</p>
-      <input type="email" id="correo" value="${EMAIL_PROPIETARIO}" autocomplete="email" aria-label="Correo">
-      <button type="button" class="boton principal" data-accion="entrar">Enviar enlace</button>
-      <p class="msg" id="msg">${esc(st.aviso)}</p>
+      <header class="login-marca">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+        <p class="kicker">Dénia · Beniarbeig</p>
+        <h1>Visitas</h1>
+      </header>
+      <div class="login-cuerpo">
+        <h2>Entrar</h2>
+        <p class="muted">Te enviamos un enlace al correo. Ábrelo desde este mismo móvil.</p>
+        <input type="email" id="correo" value="${EMAIL_PROPIETARIO}" autocomplete="email" aria-label="Correo">
+        <button type="button" class="boton principal" data-accion="entrar">Enviar enlace</button>
+        <p class="msg" id="msg">${esc(st.aviso)}</p>
+      </div>
     </section>`;
 }
 
@@ -240,7 +245,7 @@ function renderHoy() {
   const cuerpo = items.length ? `<ol class="linea-tiempo">${items.map(i => {
     const clases = ["tarjeta", i.fijo ? "fijo" : "visita", i.fin <= min ? "pasado" : "", i === siguiente ? "siguiente" : ""].join(" ");
     const hora = `<time>${fmt(i.ini)}</time>`;
-    if (i.fijo) return `<li class="fila-hora">${hora}<div class="${clases}"><h2>${esc(i.txt)}</h2><p class="meta">${fmt(i.ini)}–${fmt(i.fin)}</p></div></li>`;
+    if (i.fijo) return `<li class="fila-hora">${hora}<div class="${clases}">${i === siguiente ? '<p class="etiqueta">Siguiente</p>' : ""}<h2>${esc(i.txt)}</h2><p class="meta">${fmt(i.ini)}–${fmt(i.fin)}</p></div></li>`;
     const p = prospecto(i.id);
     if (!p) return "";
     const e = estado(p, dia, i.ini);
