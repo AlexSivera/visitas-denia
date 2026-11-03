@@ -22,7 +22,8 @@ const st = {
   sesion: null,
   listo: false,
   prospectos: [],
-  planes: {},            // clave de semana (YYYY-MM-DD del lunes) -> { placements, invertida }
+  docs: [],              // manual de ventas: método común y dossier de cada negocio (solo lectura)
+  planes: {},           // clave de semana (YYYY-MM-DD del lunes) -> { placements, invertida }
   cola: [],              // escrituras pendientes de enviar
   lunes: lunesDe(new Date()),
   diaSel: (new Date().getDay() + 6) % 7, // día visible en Semana cuando la pantalla es estrecha
@@ -32,6 +33,7 @@ const st = {
   fechas: new Map(),
   volver: new Set(),
   busqueda: "",
+  busquedaDoc: "",
   aviso: ""
 };
 
@@ -144,12 +146,12 @@ function conflicto(dia, ini, fin) {
 // ---------- Persistencia local y cola de escrituras ----------
 
 function guardarCache() {
-  try { localStorage.setItem(CLAVE_CACHE, JSON.stringify({ prospectos: st.prospectos, planes: st.planes })); } catch (e) { /* sin almacenamiento */ }
+  try { localStorage.setItem(CLAVE_CACHE, JSON.stringify({ prospectos: st.prospectos, planes: st.planes, docs: st.docs })); } catch (e) { /* sin almacenamiento */ }
 }
 function cargarCache() {
   try {
     const c = JSON.parse(localStorage.getItem(CLAVE_CACHE) || "null");
-    if (c) { st.prospectos = c.prospectos || []; st.planes = c.planes || {}; }
+    if (c) { st.prospectos = c.prospectos || []; st.planes = c.planes || {}; st.docs = c.docs || []; }
   } catch (e) { /* caché corrupta: se ignora */ }
   try { st.cola = JSON.parse(localStorage.getItem(CLAVE_COLA) || "[]"); } catch (e) { st.cola = []; }
 }
@@ -194,6 +196,9 @@ async function cargarDatos() {
   const { data, error } = await sb.from("prospectos").select("id,data");
   if (error) throw error;
   st.prospectos = data.map(r => ({ id: r.id, ...r.data }));
+  // Los documentos se editan en los .md del ordenador; si fallan, se queda la copia guardada.
+  const docs = await sb.from("documentos").select("id,data,updated_at");
+  if (!docs.error) st.docs = docs.data.map(r => ({ id: r.id, ...r.data, actualizado: r.updated_at }));
   await cargarPlan(st.lunes);
   guardarCache();
 }
@@ -254,7 +259,7 @@ function render() {
   const vista = `${r.vista}/${r.id || ""}`;
   app.classList.toggle("entra", vista !== vistaAnterior);
   vistaAnterior = vista;
-  const actual = r.vista === "negocio" ? "negocios" : r.vista;
+  const actual = r.vista === "negocio" ? "negocios" : r.vista === "doc" ? "manual" : r.vista;
   tabs.querySelectorAll("button").forEach(b => {
     if (b.dataset.ir === actual) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
@@ -262,6 +267,8 @@ function render() {
   if (r.vista === "semana") renderSemana();
   else if (r.vista === "negocios") renderNegocios();
   else if (r.vista === "negocio") renderNegocio(r.id);
+  else if (r.vista === "manual") renderManual();
+  else if (r.vista === "doc") renderDoc(r.id);
   else renderHoy();
 }
 
@@ -469,6 +476,7 @@ function renderNegocio(id) {
     : "Sin resultado todavía";
   const ya = estadoAhora(p);
   const tel = telefono(p);
+  const dossier = dossierDe(id);
   const hechos = CHECK.filter((_, i) => marcas[i]).length;
   const hoy = diaDeHoy();
   const tabla = p.semana ? `<table class="horario">${DIAS.map((nombre, d) => {
@@ -502,7 +510,11 @@ function renderNegocio(id) {
         <p class="arg">${esc(p.argumento)}</p>
         ${p.demoUrl ? "" : '<p class="muted pequeno">Sin demo publicada todavía.</p>'}
       </section>
-      ${p.guion ? `<section class="panel"><h3>Guion</h3><p class="guion">${esc(p.guion)}</p></section>` : ""}
+      ${p.guion || dossier ? `<section class="panel preparar">
+        <h3>Preparar la visita</h3>
+        ${p.guion ? `<p class="guion">${esc(p.guion)}</p>` : ""}
+        ${dossier ? `<a class="boton dossier" href="#doc/${esc(dossier.id)}"><span><b>Estudiar el dossier completo</b><small>Guion, objeciones y qué no decir</small></span>${CHEVRON}</a>` : ""}
+      </section>` : ""}
       <section class="panel">
         <h3>En la visita <span class="progreso">${hechos}/${CHECK.length}</span></h3>
         <ul class="checks">${CHECK.map((t, i) => `<li><label><input type="checkbox" data-check="${i}" data-id="${esc(id)}" ${marcas[i] ? "checked" : ""}> ${t}</label></li>`).join("")}</ul>
@@ -520,8 +532,164 @@ function renderNegocio(id) {
         </label>
         <p class="estado-resultado"><span class="muted">${esc(estadoTxt)}</span>${p.resultado ? `<button type="button" class="enlace" data-accion="deshacer" data-id="${esc(id)}">Quitar resultado</button>` : ""}</p>
       </section>
-      ${p.guion ? "" : '<p class="muted pequeno nota-guion">Guion pendiente: se escribirá a partir de la demo y de los datos verificados.</p>'}
+      ${p.guion || dossier ? "" : '<p class="muted pequeno nota-guion">Guion pendiente: se escribirá a partir de la demo y de los datos verificados.</p>'}
     </div>`;
+}
+
+// ---------- Manual: método común y dossier de cada negocio ----------
+
+const GRUPOS = [["venta", "Dossier por negocio"], ["metodo", "Método"], ["notas", "Notas y decisiones"]];
+const CHEVRON = '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
+const doc = id => st.docs.find(d => d.id === id);
+const dossierDe = id => st.docs.find(d => d.grupo === "venta" && d.prospectoId === id);
+// Minúsculas sin tildes y con la misma longitud, para poder resaltar lo encontrado en el texto original.
+const plegar = s => String(s || "").toLowerCase().split("").map(c => c.normalize("NFD")[0]).join("");
+
+// Markdown mínimo de los .md comerciales: títulos, listas, tablas, citas y enlaces.
+function mdLinea(t) {
+  return esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, txt, url) => {
+      if (/^https?:/.test(url)) return `<a href="${url}" target="_blank" rel="noopener">${txt}</a>`;
+      const d = doc(url.replace(/^.*\//, "").replace(/\.md$/, ""));
+      return d ? `<a href="#doc/${esc(d.id)}">${txt}</a>` : txt;
+    })
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+}
+
+// En la entradilla las citas son notas sobre el documento; dentro de las secciones, frases para decir.
+function mdBloques(md, entradilla) {
+  const lineas = md.split("\n"), out = [];
+  const celdas = l => l.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+  const marcaLista = /^\s*([-*]|\d+\.)\s+/;
+  const inicioBloque = /^(#{3,6}\s|>|\s*\||\s*([-*]|\d+\.)\s|-{3,}\s*$)/;
+  let i = 0, m;
+  while (i < lineas.length) {
+    const l = lineas[i];
+    if (!l.trim()) { i++; continue; }
+    if ((m = l.match(/^(#{3,6})\s+(.*)/))) {
+      const h = m[1].length === 3 ? "h3" : "h4";
+      out.push(`<${h}>${mdLinea(m[2])}</${h}>`); i++; continue;
+    }
+    if (/^-{3,}\s*$/.test(l)) { out.push("<hr>"); i++; continue; }
+    if (l.startsWith(">")) {
+      const b = [];
+      while (i < lineas.length && lineas[i].startsWith(">")) b.push(lineas[i++].replace(/^>\s?/, ""));
+      out.push(`<blockquote${entradilla ? ' class="nota-doc"' : ""}>${b.map(mdLinea).join("<br>")}</blockquote>`); continue;
+    }
+    if (l.trim().startsWith("|")) {
+      const filas = [];
+      while (i < lineas.length && lineas[i].trim().startsWith("|")) filas.push(lineas[i++]);
+      const cab = celdas(filas[0]);
+      const cuerpo = filas.slice(/^[\s|:-]+$/.test(filas[1] || "") ? 2 : 1).map(celdas);
+      // En móvil las tablas de más de dos columnas se leen como fichas con la etiqueta de cada dato.
+      out.push(`<div class="tabla"><table${cab.length > 2 ? ' class="ancha"' : ""}><thead><tr>${cab.map(c => `<th>${mdLinea(c)}</th>`).join("")}</tr></thead><tbody>${cuerpo.map(f =>
+        `<tr>${f.map((c, j) => `<td data-th="${esc((cab[j] || "").replace(/\*\*/g, ""))}">${mdLinea(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    if ((m = l.match(marcaLista))) {
+      const ordenada = /\d/.test(m[1]), items = [];
+      while (i < lineas.length && (m = lineas[i].match(marcaLista)) && /\d/.test(m[1]) === ordenada) items.push(lineas[i++].replace(marcaLista, ""));
+      const li = t => {
+        const c = t.match(/^\[( |x)\]\s+(.*)/i);
+        return c ? `<li class="tarea">${mdLinea(c[2])}</li>` : `<li>${mdLinea(t)}</li>`;
+      };
+      out.push(ordenada ? `<ol>${items.map(li).join("")}</ol>` : `<ul>${items.map(li).join("")}</ul>`); continue;
+    }
+    const p = [lineas[i++]];
+    while (i < lineas.length && lineas[i].trim() && !inicioBloque.test(lineas[i])) p.push(lineas[i++]);
+    out.push(`<p>${p.map(mdLinea).join("<br>")}</p>`);
+  }
+  return out.join("");
+}
+
+// Cada "## " es una sección plegable; lo anterior es la entradilla.
+function mdSecciones(md) {
+  const partes = ("\n" + md).split(/\n## /);
+  const intro = partes.shift();
+  return {
+    intro,
+    secciones: partes.map(s => {
+      const n = s.indexOf("\n");
+      return { titulo: n < 0 ? s : s.slice(0, n), cuerpo: n < 0 ? "" : s.slice(n + 1) };
+    })
+  };
+}
+
+function renderManual() {
+  const n = st.docs.length;
+  app.innerHTML = `
+    <div class="cabecera"><div><p class="kicker">Centro de operaciones · ${n} documento${n === 1 ? "" : "s"}</p><h1>Manual</h1></div></div>
+    <input class="buscar" id="buscar-doc" type="search" placeholder="Buscar en guiones, objeciones y dossiers" value="${esc(st.busquedaDoc)}" aria-label="Buscar en el manual">
+    <div id="lista-docs"></div>`;
+  pintarListaDocs();
+}
+
+function pintarListaDocs() {
+  const el = document.getElementById("lista-docs");
+  if (!st.docs.length) { el.innerHTML = '<p class="vacio">Todavía no hay documentos en este dispositivo. Se descargan al entrar con conexión.</p>'; return; }
+  const q = plegar(st.busquedaDoc.trim());
+  const nombre = d => d.prospectoId && prospecto(d.prospectoId) ? prospecto(d.prospectoId).nombre : d.titulo;
+  const coincide = d => !q || plegar(`${nombre(d)} ${d.titulo} ${d.contenido}`).includes(q);
+  // Con búsqueda, la línea de debajo enseña el trozo de texto donde aparece.
+  const extracto = d => {
+    if (!q) return esc(d.resumen || "");
+    const txt = String(d.contenido || "").replace(/[#>*`|[\]]|:?-{3,}:?/g, " ").replace(/\s+/g, " ");
+    const pos = plegar(txt).indexOf(q);
+    if (pos < 0) return esc(d.resumen || "");
+    const fin = pos + q.length;
+    return `${pos > 40 ? "…" : ""}${esc(txt.slice(Math.max(0, pos - 40), pos))}<mark>${esc(txt.slice(pos, fin))}</mark>${esc(txt.slice(fin, fin + 70))}…`;
+  };
+  const fila = d => `
+    <a class="fila doc" href="#doc/${esc(d.id)}">
+      ${d.grupo === "metodo" ? `<span class="num">${String(d.orden || 0).padStart(2, "0")}</span>` : ""}
+      <span class="doc-texto"><b>${esc(nombre(d))}</b><small>${extracto(d)}</small></span>
+      <span class="fila-lado">${CHEVRON}</span>
+    </a>`;
+  const conDossier = new Set(st.docs.filter(d => d.grupo === "venta").map(d => d.prospectoId));
+  const sinDossier = st.prospectos.filter(p => !conDossier.has(p.id)).length;
+  const html = GRUPOS.map(([g, t]) => {
+    const lista = st.docs.filter(d => d.grupo === g && coincide(d))
+      .sort((a, b) => (a.orden || 0) - (b.orden || 0) || nombre(a).localeCompare(nombre(b), "es"));
+    const falta = g === "venta" && !q && sinDossier ? `<p class="muted pequeno falta-dossier">${sinDossier} negocio${sinDossier === 1 ? "" : "s"} sin dossier todavía.</p>` : "";
+    if (!lista.length && !falta) return "";
+    return `<section class="grupo-docs"><h2 class="kicker">${t} <span>${lista.length}</span></h2>${lista.map(fila).join("")}${falta}</section>`;
+  }).join("");
+  el.innerHTML = html.indexOf("fila doc") >= 0 || !q ? html : '<p class="vacio">Nada coincide con la búsqueda.</p>';
+}
+
+function renderDoc(id) {
+  const d = doc(id);
+  if (!d) { app.innerHTML = '<p>Documento no encontrado.</p><p><a href="#manual">Volver al manual</a></p>'; return; }
+  const p = d.prospectoId ? prospecto(d.prospectoId) : null;
+  const { intro, secciones } = mdSecciones(d.contenido || "");
+  const grupo = (GRUPOS.find(g => g[0] === d.grupo) || [0, ""])[1];
+  app.innerHTML = `
+    <a class="atras" href="#manual"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>Manual</a>
+    <header class="ficha-cab doc-cab">
+      <p class="kicker">${esc(grupo)}</p>
+      <h1>${esc(p ? p.nombre : d.titulo)}</h1>
+      ${p ? `<p class="muted">${esc(d.resumen || "")}</p>` : ""}
+    </header>
+    ${p ? `<div class="acciones-ficha">
+      ${p.demoUrl ? `<a class="enlace-boton" href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Abrir la demo ↗</a>` : ""}
+      <a class="boton" href="#negocio/${esc(p.id)}">Ficha y resultado</a>
+      <a class="boton" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
+    </div>` : ""}
+    ${secciones.length > 2 ? `<nav class="indice" aria-label="Ir a una sección">${secciones.map((s, i) =>
+      `<button type="button" class="filtro" data-accion="ir-seccion" data-sec="${i}">${mdLinea(s.titulo.replace(/^\d+\.\s*/, ""))}</button>`).join("")}</nav>` : ""}
+    <article class="md">
+      ${intro.trim() ? `<div class="md-intro">${mdBloques(intro, true)}</div>` : ""}
+      ${secciones.length > 1 ? '<div class="md-controles"><button type="button" class="enlace" data-accion="desplegar">Abrir todo</button></div>' : ""}
+      ${secciones.map((s, i) => `
+        <details class="seccion" id="sec-${i}"${i === 0 || secciones.length === 1 ? " open" : ""}>
+          <summary>${mdLinea(s.titulo)}</summary>
+          <div class="seccion-cuerpo">${mdBloques(s.cuerpo)}</div>
+        </details>`).join("")}
+    </article>
+    <p class="muted pequeno fuente-doc">Solo lectura. Se edita en ${esc(d.origen || "el ordenador")}${d.actualizado ? " · actualizado el " + fechaCorta(d.actualizado) : ""}.</p>`;
 }
 
 // ---------- Eventos ----------
@@ -568,6 +736,7 @@ app.addEventListener("input", e => {
   const t = e.target;
   if (t.matches("[data-nota]")) st.notas.set(t.dataset.nota, t.value);
   if (t.id === "buscar") { st.busqueda = t.value; pintarListaNegocios(); }
+  if (t.id === "buscar-doc") { st.busquedaDoc = t.value; pintarListaDocs(); }
 });
 
 app.addEventListener("dragstart", e => {
@@ -600,6 +769,20 @@ async function accion(b) {
   if (a === "dia") { st.diaSel = +b.dataset.dia; return render(); }
   if (a === "cancelar-sel") { st.seleccion = null; return render(); }
   if (a === "filtro") { st.filtro = b.dataset.filtro; return render(); }
+  if (a === "desplegar") {
+    const secciones = app.querySelectorAll("details.seccion");
+    const abrir = Array.prototype.some.call(secciones, s => !s.open);
+    Array.prototype.forEach.call(secciones, s => { s.open = abrir; });
+    b.textContent = abrir ? "Cerrar todo" : "Abrir todo";
+    return;
+  }
+  if (a === "ir-seccion") {
+    const s = document.getElementById("sec-" + b.dataset.sec);
+    if (!s) return;
+    s.open = true;
+    s.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    return;
+  }
   if (a === "entrar") return enviarEnlace();
 
   const p = prospecto(id);

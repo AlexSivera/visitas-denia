@@ -63,7 +63,7 @@ a { color: var(--accent); }
 /* Barra inferior: flotante, con icono y etiqueta */
 .tabs {
   position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 20;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 6px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 6px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--sombra);
 }
 .tabs button {
@@ -355,5 +355,83 @@ textarea { min-height: 76px; resize: vertical; }
 
 @media (min-width: 900px) {
   body { max-width: 1100px; margin-inline: auto; }
-  .tabs { left: 50%; right: auto; transform: translateX(-50%); width: 460px; bottom: 18px; }
+  .tabs { left: 50%; right: auto; transform: translateX(-50%); width: 560px; bottom: 18px; }
+  #app .indice { flex-wrap: wrap; overflow: visible; }
+  .doc-cab, .md, .fuente-doc, .doc-cab ~ .acciones-ficha, .indice { max-width: 760px; }
+}
+
+/* Manual: lista de documentos */
+.grupo-docs { margin-bottom: 22px; }
+.grupo-docs > h2 { font-family: var(--sans); margin: 0 0 8px 2px; }
+.grupo-docs > h2 span { font-family: var(--mono); font-weight: 500; letter-spacing: 0; margin-left: 4px; }
+.fila.doc { justify-content: flex-start; }
+.fila.doc .doc-texto { flex: 1 1 auto; min-width: 0; }
+.fila.doc small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.fila .num { font-family: var(--mono); font-size: 13px; color: var(--muted); flex: 0 0 auto; width: 22px; }
+.falta-dossier { margin: 2px 2px 0; }
+mark { background: var(--visita); color: var(--visita-fg); border-radius: 3px; padding: 0 2px; }
+
+/* Preparar la visita, en la ficha */
+.boton.dossier { justify-content: space-between; text-align: left; min-height: 60px; padding: 10px 12px 10px 14px; background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.boton.dossier span { display: grid; gap: 1px; }
+.boton.dossier small { font-weight: 500; font-size: 13px; opacity: .8; }
+.boton.dossier .chevron { color: inherit; }
+
+/* Documento */
+.doc-cab h1 { font-size: 32px; }
+.doc-cab .muted { font-size: 15px; }
+.doc-cab + .acciones-ficha { margin-bottom: 4px; }
+.indice { display: flex; gap: 6px; overflow-x: auto; margin: 14px -2px 0; padding: 2px; scrollbar-width: none; }
+.indice::-webkit-scrollbar { display: none; }
+.indice .filtro { display: block; max-width: 230px; line-height: 36px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md { display: grid; gap: 10px; margin-top: 14px; }
+.md-intro { display: grid; gap: 12px; padding: 2px 2px 4px; }
+.md-controles { display: flex; justify-content: flex-end; margin: -4px 0 -6px; }
+.seccion { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--sombra); scroll-margin-top: 16px; }
+.seccion summary {
+  list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; gap: 14px;
+  min-height: 58px; padding: 12px 16px; font-family: var(--display); font-size: 20px; line-height: 1.2; text-wrap: balance;
+}
+.seccion summary::-webkit-details-marker { display: none; }
+.seccion summary::after {
+  content: ""; flex: 0 0 auto; width: 9px; height: 9px; margin-right: 4px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: translateY(-3px) rotate(45deg); transition: transform .2s ease;
+}
+.seccion[open] summary::after { transform: translateY(2px) rotate(-135deg); }
+.seccion[open] summary { border-bottom: 1px solid var(--line); }
+.seccion-cuerpo { display: grid; gap: 12px; padding: 14px 16px 18px; }
+.md p, .md li { font-size: 16px; line-height: 1.6; text-wrap: pretty; }
+.md h3 { font-family: var(--sans); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-top: 8px; }
+.md h4 { font-family: var(--sans); font-size: 15px; font-weight: 700; margin: 4px 0 0; }
+.md ul, .md ol { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+.md li::marker { color: var(--muted); }
+.md ol li::marker { font-family: var(--mono); font-size: 13px; }
+.md li.tarea { list-style: none; position: relative; margin-left: -22px; padding-left: 30px; }
+.md li.tarea::before { content: ""; position: absolute; left: 0; top: 4px; width: 18px; height: 18px; border: 1.5px solid var(--muted); border-radius: 5px; }
+/* Las citas son lo que se dice en voz alta: se leen como frases, no como notas. */
+.md blockquote {
+  margin: 0; padding: 12px 14px; border-left: 3px solid var(--sel); border-radius: 0 12px 12px 0;
+  background: var(--visita); color: var(--visita-fg); font-family: var(--display); font-size: 18px; line-height: 1.4;
+}
+.md blockquote.nota-doc { border-left-color: var(--line); background: none; color: var(--muted); font-family: var(--sans); font-size: 13px; line-height: 1.5; padding: 2px 0 2px 12px; border-radius: 0; }
+.md hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
+.md code { font-family: var(--mono); font-size: 13px; background: var(--surface-2); border: 1px solid var(--line); padding: 1px 5px; border-radius: 6px; overflow-wrap: anywhere; }
+.md a { overflow-wrap: anywhere; }
+.tabla { overflow-x: auto; }
+.md table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.md th { text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding: 0 12px 8px 0; border-bottom: 1px solid var(--line); vertical-align: bottom; }
+.md td { padding: 10px 12px 10px 0; vertical-align: top; line-height: 1.45; border-bottom: 1px solid var(--line); }
+.md tr:last-child td { border-bottom: 0; }
+.md td:first-child { font-weight: 600; }
+.fuente-doc { text-align: center; margin-top: 20px; padding: 0 12px; }
+@media (max-width: 699px) {
+  .md table, .md tbody, .md tr, .md td { display: block; }
+  .md thead { display: none; }
+  .md tr { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .md tr:first-child { padding-top: 0; }
+  .md tr:last-child { border-bottom: 0; padding-bottom: 0; }
+  .md td { border: 0; padding: 2px 0; font-size: 15px; }
+  .md table.ancha td:not(:first-child)[data-th]::before {
+    content: attr(data-th); display: block; margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+  }
 }
