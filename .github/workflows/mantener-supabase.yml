@@ -1,0 +1,27 @@
+# Supabase pausa los proyectos gratuitos tras unos días sin uso, y entonces la app no carga ni guarda.
+# Cada tres días se hace una lectura a la base de datos para que cuente como actividad.
+# Con la clave publicable y la seguridad por filas la respuesta llega vacía, pero la consulta se ejecuta.
+# Si falla (proyecto pausado o caído), el job sale en rojo y GitHub avisa por correo.
+name: Mantener Supabase activo
+
+on:
+  schedule:
+    - cron: "17 8 */3 * *"   # cada tres días, 08:17 UTC
+  workflow_dispatch:
+
+jobs:
+  latido:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Leer de la base de datos
+        env:
+          SUPABASE_URL: https://rnbvfujxvkaulvsxlizq.supabase.co
+          # La misma clave publicable que ya usa app.js; no da acceso a datos.
+          SUPABASE_KEY: sb_publishable_ofCyI4sX4AO4FixE7ZUQKQ_KvdNdHhS
+        run: |
+          codigo=$(curl -s -o respuesta.json -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/prospectos?select=id&limit=1" \
+            -H "apikey: $SUPABASE_KEY")
+          echo "HTTP $codigo: $(cat respuesta.json)"
+          test "$codigo" = "200"
