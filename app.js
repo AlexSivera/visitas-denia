@@ -415,9 +415,9 @@ function renderHoy() {
   const hoy = hoyISO();
   const tareas = st.prospectos
     .map(p => ({ p, s: siguienteDe(p) }))
-    .filter(x => x.s && x.s.fecha && x.s.fecha <= hoy && etapaDe(x.p) !== "descartado")
+    .filter(x => x.s && x.s.fecha && x.s.fecha <= hoy && etapaDe(x.p) !== "descartado" && !archivado(x.p))
     .sort((a, b) => a.s.fecha.localeCompare(b.s.fecha) || byNombre(a.p, b.p));
-  const captados = st.prospectos.filter(p => etapaDe(p) === "captado").length;
+  const captados = st.prospectos.filter(p => etapaDe(p) === "captado" && !archivado(p)).length;
   const tareasHtml = tareas.length || captados ? `
     <section class="pendiente-hoy">
       <h2 class="kicker">Para hoy <span>${tareas.length}</span></h2>
@@ -448,7 +448,7 @@ function renderSemana() {
   const hoy = actual ? diaDeHoy() : -1;
   const otra = par === 0 ? "B" : "A";
   // Para colocar solo sirven los que tienen algo que enseñar; también los ya colocados esta semana.
-  const colocable = p => ["investigado", "demo", "visitado", "propuesta"].indexOf(etapaDe(p)) >= 0 || plan.placements.some(x => x.prospectoId === p.id);
+  const colocable = p => (!archivado(p) && ["investigado", "demo", "visitado", "propuesta"].indexOf(etapaDe(p)) >= 0) || plan.placements.some(x => x.prospectoId === p.id);
   const negocios = st.prospectos.filter(colocable).sort(byNombre).map(p => {
     const n = plan.placements.filter(x => x.prospectoId === p.id).length;
     return `<button type="button" class="neg${st.seleccion === p.id ? " sel" : ""}${n ? " colocado" : ""}" draggable="true" data-neg="${esc(p.id)}" aria-pressed="${st.seleccion === p.id}">
@@ -526,14 +526,18 @@ function renderSemana() {
     <div class="board-wrap${unDia ? " un-dia" : ""}"><div class="board${unDia ? " dia-unico" : ""}">${tablero}</div></div>`;
 }
 
+// Archivar aparca un negocio sin cambiar su etapa: deja de salir en Hoy, Semana y los filtros,
+// y solo se ve en «Archivados» hasta que se recupera.
+const archivado = p => !!p.archivado;
 // "Activos" es todo lo que aún se mueve: ni clientes cerrados ni descartados.
 const activo = p => etapaDe(p) !== "descartado" && etapaDe(p) !== "cliente";
-const enEtapa = (p, f) => f === "todos" || (f === "activos" ? activo(p) : etapaDe(p) === f);
+const enEtapa = (p, f) => f === "archivados" ? archivado(p)
+  : !archivado(p) && (f === "todos" || (f === "activos" ? activo(p) : etapaDe(p) === f));
 
 function renderNegocios() {
   const n = f => st.prospectos.filter(p => enEtapa(p, f)).length;
   const clientes = n("cliente");
-  const embudo = [["activos", "En marcha"], ...ETAPAS.map(e => [e[0], e[1]]), ["todos", "Todos"]]
+  const embudo = [["activos", "En marcha"], ...ETAPAS.map(e => [e[0], e[1]]), ["todos", "Todos"], ["archivados", "Archivados"]]
     .filter(([f]) => f === "activos" || f === "todos" || f === "captado" || f === "cliente" || n(f))
     .map(([f, t]) => `<button type="button" class="paso${f === "activos" || f === "todos" ? " total" : ""}" data-accion="etapa-filtro" data-etapa="${f}" aria-pressed="${st.etapa === f}"><b>${n(f)}</b><small>${t}</small></button>`).join("");
   app.innerHTML = `
@@ -574,7 +578,7 @@ function pintarListaNegocios() {
   const el = document.getElementById("lista-negocios");
   if (!lista.length) {
     el.innerHTML = q || st.etapa !== "captado"
-      ? '<p class="vacio">Ningún negocio coincide.</p>'
+      ? `<p class="vacio">${!q && st.etapa === "archivados" ? "No tienes negocios archivados." : "Ningún negocio coincide."}</p>`
       : '<div class="vacio"><p>No tienes negocios apuntados por investigar.</p><a class="boton" href="#captar">Apuntar uno</a></div>';
     return;
   }
@@ -584,7 +588,7 @@ function pintarListaNegocios() {
       const grupo = lista.filter(p => etapaDe(p) === e);
       return grupo.length ? `<section class="grupo-docs"><h2 class="kicker">${t} <span>${grupo.length}</span><small>${ayuda}</small></h2>${grupo.map(p => fila(p, false)).join("")}</section>` : "";
     }).join("");
-  } else el.innerHTML = lista.map(p => fila(p, st.etapa === "todos" || !!q)).join("");
+  } else el.innerHTML = lista.map(p => fila(p, st.etapa === "todos" || st.etapa === "archivados" || !!q)).join("");
 }
 
 function renderNegocio(id) {
@@ -616,8 +620,12 @@ function renderNegocio(id) {
     <header class="ficha-cab">
       <p class="kicker">${[p.tipo || etiquetaCategoria(cat), p.zona].filter(Boolean).map(esc).join(" · ")}</p>
       <h1>${esc(p.nombre)}</h1>
-      ${p.semana ? `<p><span class="chip ${ya.clase}">${ya.texto}</span></p>` : ""}
+      ${p.semana && !p.archivado ? `<p><span class="chip ${ya.clase}">${ya.texto}</span></p>` : ""}
     </header>
+    ${p.archivado ? `<div class="archivado-aviso" role="status">
+      <p><b>Archivado el ${fechaCorta(p.archivado)}.</b> No sale en Hoy, en Semana ni en los filtros de Negocios.</p>
+      <button type="button" class="boton" data-accion="recuperar" data-id="${esc(id)}">Recuperar</button>
+    </div>` : ""}
     <div class="ficha">
       <div class="acciones-ficha">
         <a class="enlace-boton" href="${esc(mapsUrl(p))}" target="_blank" rel="noopener">${p.direccion || !p.mapsLink ? "Cómo llegar" : "Abrir en Google Maps"}</a>
@@ -633,7 +641,10 @@ function renderNegocio(id) {
           <label>Siguiente paso<input type="text" data-paso="${esc(id)}" value="${esc(sig ? sig.txt : "")}" placeholder="Investigar, hacer la demo, llamar…" enterkeyhint="done"></label>
           <label>Cuándo<input type="date" data-pasofecha="${esc(id)}" value="${sig && sig.fecha ? sig.fecha : ""}"></label>
         </div>
-        ${sig ? `<button type="button" class="enlace" data-accion="paso-hecho" data-id="${esc(id)}">Hecho: quitar el siguiente paso</button>` : ""}
+        <div class="seguimiento-pie">
+          ${sig ? `<button type="button" class="enlace" data-accion="paso-hecho" data-id="${esc(id)}">Hecho: quitar el siguiente paso</button>` : ""}
+          ${p.archivado ? "" : `<button type="button" class="enlace archivar" data-accion="archivar" data-id="${esc(id)}">Archivar</button>`}
+        </div>
       </section>
       ${p.semana || p.horario ? `<section class="panel">
         <h3>Horario</h3>
@@ -1077,6 +1088,14 @@ async function accion(b) {
   if (a === "etapa") {
     actualizarProspecto(id, { etapa: b.dataset.etapa });
     aviso(`${p.nombre}: ${etiquetaEtapa(b.dataset.etapa)}.`);
+  }
+  if (a === "archivar") {
+    actualizarProspecto(id, { archivado: hoyISO() });
+    aviso(`${p.nombre} archivado. Lo tienes en Negocios → Archivados.`);
+  }
+  if (a === "recuperar") {
+    actualizarProspecto(id, { archivado: null });
+    aviso(`${p.nombre} vuelve a ${etiquetaEtapa(etapa)}.`);
   }
   if (a === "paso-hecho") { actualizarProspecto(id, { siguientePaso: null, siguienteFecha: null, volverEl: null }); aviso("Paso hecho."); }
   if (a === "borrar") {

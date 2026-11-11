@@ -500,3 +500,14 @@ button.fila { width: 100%; text-align: left; font: inherit; cursor: pointer; }
   .fab { right: calc(50% - 280px - 190px); bottom: 24px; }
 }
 body.con-fab { padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); }
+
+/* Archivar: aparcado, sin descartar */
+.seguimiento-pie { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; }
+.enlace.archivar { color: var(--muted); text-decoration-color: color-mix(in srgb, var(--muted) 40%, transparent); }
+.archivado-aviso {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px;
+  margin: 0 0 14px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 14px; background: var(--surface-2);
+}
+.archivado-aviso p { margin: 0; flex: 1 1 220px; font-size: 14px; color: var(--muted); }
+.archivado-aviso b { color: var(--fg); }
+.archivado-aviso .boton { min-height: 44px; }
