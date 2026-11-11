@@ -435,3 +435,68 @@ mark { background: var(--visita); color: var(--visita-fg); border-radius: 3px; p
     content: attr(data-th); display: block; margin-top: 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
   }
 }
+
+/* ---------- Centro de negocio ---------- */
+/* Botón de apuntar: encima de la barra, a la derecha */
+.fab {
+  position: fixed; right: 16px; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 19;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 46px; padding: 0 16px 0 12px;
+  border-radius: 999px; background: var(--accent); color: var(--accent-fg); text-decoration: none; font-weight: 600; font-size: 14px;
+  box-shadow: 0 10px 28px -10px color-mix(in srgb, var(--accent) 80%, transparent), var(--sombra);
+  transition: transform .2s ease;
+}
+.fab:active { transform: scale(.96); }
+.fab .icono { width: 20px; height: 20px; }
+
+/* Embudo: cada etapa es un número grande y su nombre; sirve de resumen y de filtro */
+.embudo { display: flex; gap: 6px; overflow-x: auto; margin: -2px -2px 10px; padding: 2px; scrollbar-width: none; }
+.embudo::-webkit-scrollbar { display: none; }
+.paso {
+  flex: 0 0 auto; display: grid; justify-items: start; gap: 0; min-width: 78px; padding: 8px 12px 9px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--fg); text-align: left;
+}
+.paso b { font-family: var(--display); font-size: 24px; font-weight: 500; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.paso small { font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.paso.total { background: var(--surface-2); }
+.paso[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.paso[aria-pressed="true"] small { color: inherit; opacity: .75; }
+.grupo-docs > h2 small { display: block; margin-top: 1px; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+
+/* Ficha: etapa y siguiente paso */
+.seguimiento .etapas { margin: 0 -2px; }
+.paso-siguiente { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.paso-siguiente label, .editar label, .captar label:not(.filtro) { display: grid; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.paso-siguiente input, .editar input, .editar select, .captar input[type="text"] {
+  width: 100%; min-height: 46px; border: 1px solid var(--line); background: var(--bg); border-radius: 12px; padding: 0 12px; color: var(--fg); font-weight: 400; font-size: 16px;
+}
+.paso-siguiente input[type="date"] { width: auto; min-width: 150px; }
+.seguimiento .enlace { justify-self: start; }
+.motivos { display: flex; flex-wrap: wrap; gap: 6px; }
+.editar { gap: 12px; }
+.editar summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); min-height: 28px; display: flex; align-items: center; }
+.editar:not([open]) { gap: 0; }
+.enlace.peligro { color: var(--closed-fg); text-decoration-color: color-mix(in srgb, var(--closed-fg) 40%, transparent); justify-self: start; }
+
+/* Apuntar negocio */
+.captar fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.captar legend { padding: 0; margin-bottom: 8px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.captar label small { font-weight: 500; }
+.opciones { display: flex; flex-wrap: wrap; gap: 6px; }
+.opciones .filtro { cursor: pointer; position: relative; }
+.opciones input { position: absolute; opacity: 0; pointer-events: none; }
+.opciones .filtro.marcado { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.opciones .filtro:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.captar .enlace-boton { border: 0; width: 100%; cursor: pointer; }
+
+/* Hoy: pasos que tocan */
+.pendiente-hoy { margin-top: 24px; }
+.pendiente-hoy > h2 { font-family: var(--sans); margin: 0 0 8px 2px; }
+.pendiente-hoy > h2 span { font-family: var(--mono); font-weight: 500; letter-spacing: 0; margin-left: 4px; }
+button.fila { width: 100%; text-align: left; font: inherit; cursor: pointer; }
+.fila.captados { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.fila.captados small { color: inherit; opacity: .8; }
+.fila.captados .chevron { color: inherit; }
+@media (min-width: 900px) {
+  .fab { right: calc(50% - 280px - 190px); bottom: 24px; }
+}
+body.con-fab { padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); }

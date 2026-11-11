@@ -1,4 +1,4 @@
-// Visitas Dénia: hoy, semana (con arrastre), negocios (ruta, guion y resultado).
+// Visitas Dénia: centro de negocio. Hoy, semana (con arrastre), negocios por etapa y categoría, apuntar desde Maps y manual.
 // Datos en Supabase (tablas prospectos y plan, solo tu cuenta por RLS). Sin conexión se usa la copia de localStorage
 // y las escrituras pendientes se guardan en una cola que se envía al volver la conexión.
 
@@ -13,6 +13,22 @@ const LETRA = ["L", "M", "X", "J", "V", "S", "D"];
 const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 const CHECK = ["Demo abierta en el móvil", "Horario confirmado en la puerta", "Persona que decide", "Siguiente paso acordado"];
 const RES = { visitado: "Visitado", volver: "Volver otro día", no_interesado: "No interesado" };
+// Centro de negocio: cada negocio pasa por estas etapas, de apuntado en Maps a cliente.
+const ETAPAS = [
+  ["captado", "Captados", "Apuntado, sin investigar"],
+  ["investigado", "Investigados", "Investigado, falta la demo"],
+  ["demo", "Demo hecha", "Listo para visitar"],
+  ["visitado", "Visitados", "Ya le has enseñado la demo"],
+  ["propuesta", "Propuesta", "Propuesta enviada, esperando respuesta"],
+  ["cliente", "Clientes", "Ha contratado"],
+  ["descartado", "Descartados", "No interesado o no encaja"]
+];
+const CATEGORIAS = [
+  ["restauracion", "Restauración"], ["cafes", "Cafés y dulce"], ["belleza", "Belleza y bienestar"],
+  ["comercio", "Comercio"], ["servicios", "Servicios y talleres"]
+];
+const MOTIVOS = ["Sin web", "Web antigua o mala", "Solo Instagram", "Buenas reseñas", "Buen producto", "Buenas fotos"];
+const ZONAS = ["Dénia", "Les Marines (Dénia)", "Beniarbeig", "Xàbia", "Pedreguer", "Ondara", "El Verger", "Els Poblets", "Gata de Gorgos"];
 const CLAVE_CACHE = "visitas.cache.v1";
 const CLAVE_COLA = "visitas.cola.v1";
 
@@ -27,7 +43,9 @@ const st = {
   cola: [],              // escrituras pendientes de enviar
   lunes: lunesDe(new Date()),
   diaSel: (new Date().getDay() + 6) % 7, // día visible en Semana cuando la pantalla es estrecha
-  filtro: "todos",
+  etapa: "activos",      // filtro de Negocios: "activos", "todos" o una etapa
+  categoria: "todas",
+  compartido: null,      // lo que llega al compartir desde Google Maps, para rellenar Apuntar
   seleccion: null,
   notas: new Map(),
   fechas: new Map(),
@@ -39,6 +57,7 @@ const st = {
 
 const app = document.getElementById("app");
 const tabs = document.getElementById("tabs");
+const fab = document.getElementById("fab");
 
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = min => `${String(Math.floor(min / 60) % 24).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
@@ -48,11 +67,39 @@ const hoyISO = () => clave(new Date());
 const manana = () => clave(new Date(Date.now() + DAY));
 const byNombre = (a, b) => a.nombre.localeCompare(b.nombre, "es");
 const prospecto = id => st.prospectos.find(p => p.id === id);
-const mapsUrl = p => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((p.direccion || p.nombre) + ", Alicante, España")}`;
+const mapsUrl = p => !p.direccion && p.mapsLink ? p.mapsLink : `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent((p.direccion || p.nombre) + ", Alicante, España")}`;
 const movil = matchMedia("(max-width: 699px)");
 const diaDeHoy = () => (new Date().getDay() + 6) % 7;
 const minDeAhora = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
-const telefono = p => { const m = String(p.horario || "").match(/(\+34\s?)?[6-9](?:\s?\d){8}/); return m ? m[0].replace(/\s/g, "") : null; };
+const telefono = p => { const m = String(p.telefono || p.horario || "").match(/(\+34\s?)?[6-9](?:\s?\d){8}/); return m ? m[0].replace(/\s/g, "") : null; };
+
+// Etapa y categoría guardadas; si faltan (datos antiguos) se deducen.
+const rango = e => ETAPAS.findIndex(x => x[0] === e);
+const etiquetaEtapa = e => (ETAPAS.find(x => x[0] === e) || [0, e])[1];
+const etiquetaCategoria = c => (CATEGORIAS.find(x => x[0] === c) || [0, "Sin categoría"])[1];
+function etapaDe(p) {
+  if (p.etapa) return p.etapa;
+  if (p.resultado === "no_interesado") return "descartado";
+  if (p.resultado === "visitado") return "visitado";
+  return p.demoUrl ? "demo" : "investigado";
+}
+function adivinarCategoria(texto) {
+  const t = String(texto || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  if (/peluq|perruq|barber|estetic|masaje|spa\b|unas|nails?\b|fisio|yoga|pilates|gimnas|tatu|tattoo|belleza|depila/.test(t)) return "belleza";
+  if (/cafe|panad|helad|paster|churr|forn\b|horno|crep|gofre|zumo|te\b|dulce|bombon/.test(t)) return "cafes";
+  if (/restaur|\bbar\b|pizz|hambur|burger|tabern|tapas|arroc|kebab|sushi|asador|brasa|cocina|marisq|gastro|chiringu|cervec/.test(t)) return "restauracion";
+  if (/flor|tienda|boutique|moda|zapat|librer|joyer|optica|regalo|ferret|bodega|vinos|muebles|decorac|botiga|mercad/.test(t)) return "comercio";
+  return "servicios";
+}
+const categoriaDe = p => p.categoria || adivinarCategoria(`${p.tipo} ${p.nombre}`);
+// Siguiente paso con fecha; "volver otro día" de las visitas antiguas cuenta como tal.
+function siguienteDe(p) {
+  if (p.siguientePaso || p.siguienteFecha) return { txt: p.siguientePaso || "Siguiente paso", fecha: p.siguienteFecha || null };
+  if (p.resultado === "volver" && p.volverEl) return { txt: "Volver a visitar", fecha: p.volverEl };
+  return null;
+}
+const urlDe = t => { const m = String(t || "").match(/https?:\/\/\S+/); return m ? m[0].replace(/[),.]+$/, "") : ""; };
+const slug = t => plegar(t).replace(/['’]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "negocio";
 
 // En el login el mensaje se queda en la tarjeta; en el resto de vistas sale como aviso flotante que se va solo.
 let temporizadorAviso;
@@ -175,8 +222,11 @@ async function vaciarCola() {
     while (st.cola.length) {
       const op = st.cola[0];
       const ahora = new Date().toISOString();
+      // upsert para que los negocios apuntados sin conexión se creen al volver la red.
       const { error } = op.tipo === "prospecto"
-        ? await sb.from("prospectos").update({ data: op.data, updated_at: ahora }).eq("id", op.id)
+        ? (op.borrar
+          ? await sb.from("prospectos").delete().eq("id", op.id)
+          : await sb.from("prospectos").upsert({ id: op.id, data: op.data, updated_at: ahora }))
         : await sb.from("plan").upsert({ semana: op.semana, placements: op.placements, invertida: op.invertida, updated_at: ahora });
       // Se avisa una vez; el chip "sin sincronizar" de cada vista recuerda lo pendiente.
       if (error) { if (!errorAvisado) aviso("No se pudo guardar; se reintentará al volver la conexión."); errorAvisado = true; break; }
@@ -224,6 +274,25 @@ function actualizarProspecto(id, cambios) {
   encolar({ tipo: "prospecto", clave: id, id, data });
 }
 
+function crearProspecto(datos) {
+  let id = slug(datos.nombre), n = 2;
+  while (prospecto(id)) id = `${slug(datos.nombre)}-${n++}`;
+  const ahora = new Date().toISOString();
+  const p = { id, ...datos, etapa: "captado", captadoEl: hoyISO(), actualizadoEn: ahora };
+  st.prospectos.push(p);
+  const data = { ...p };
+  delete data.id;
+  guardarCache();
+  encolar({ tipo: "prospecto", clave: id, id, data });
+  return p;
+}
+
+function borrarProspecto(id) {
+  st.prospectos = st.prospectos.filter(p => p.id !== id);
+  guardarCache();
+  encolar({ tipo: "prospecto", clave: id, id, borrar: true });
+}
+
 function guardarPlan(lista, invertida = planDe().invertida) {
   const k = clave(st.lunes);
   st.planes[k] = { placements: lista, invertida };
@@ -259,12 +328,16 @@ function render() {
   const vista = `${r.vista}/${r.id || ""}`;
   app.classList.toggle("entra", vista !== vistaAnterior);
   vistaAnterior = vista;
-  const actual = r.vista === "negocio" ? "negocios" : r.vista === "doc" ? "manual" : r.vista;
+  const actual = r.vista === "negocio" || r.vista === "captar" ? "negocios" : r.vista === "doc" ? "manual" : r.vista;
   tabs.querySelectorAll("button").forEach(b => {
     if (b.dataset.ir === actual) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   });
+  // El botón de apuntar solo donde se consulta la lista: en la semana taparía el tablero.
+  fab.hidden = !(r.vista === "hoy" || r.vista === "negocios");
+  document.body.classList.toggle("con-fab", !fab.hidden);
   if (r.vista === "semana") renderSemana();
+  else if (r.vista === "captar") renderCaptar();
   else if (r.vista === "negocios") renderNegocios();
   else if (r.vista === "negocio") renderNegocio(r.id);
   else if (r.vista === "manual") renderManual();
@@ -279,6 +352,7 @@ function ruta() {
 
 function renderLogin() {
   tabs.hidden = true;
+  fab.hidden = true;
   app.innerHTML = `
     <section class="login">
       <header class="login-marca">
@@ -337,6 +411,25 @@ function renderHoy() {
     : "Sin visitas hoy";
   const cuerpo = items.length ? `<ol class="linea-tiempo">${filas.join("")}</ol>` : "";
   const vacio = visitas.length ? "" : `<div class="vacio"><p>No hay visitas colocadas para hoy.</p><a class="boton" href="#semana">Planificar la semana</a></div>`;
+  // Lo que toca o ya se ha pasado de fecha, y los apuntados que esperan investigación.
+  const hoy = hoyISO();
+  const tareas = st.prospectos
+    .map(p => ({ p, s: siguienteDe(p) }))
+    .filter(x => x.s && x.s.fecha && x.s.fecha <= hoy && etapaDe(x.p) !== "descartado")
+    .sort((a, b) => a.s.fecha.localeCompare(b.s.fecha) || byNombre(a.p, b.p));
+  const captados = st.prospectos.filter(p => etapaDe(p) === "captado").length;
+  const tareasHtml = tareas.length || captados ? `
+    <section class="pendiente-hoy">
+      <h2 class="kicker">Para hoy <span>${tareas.length}</span></h2>
+      ${tareas.map(({ p, s }) => `
+        <a class="fila" href="#negocio/${esc(p.id)}">
+          <span><b>${esc(p.nombre)}</b><small>${esc(s.txt)}</small></span>
+          <span class="fila-lado"><span class="chip ${s.fecha < hoy ? "no" : "aviso"}">${s.fecha < hoy ? "desde el " + fechaCorta(s.fecha) : "hoy"}</span>${CHEVRON}</span>
+        </a>`).join("")}
+      ${captados ? `<button type="button" class="fila captados" data-accion="ver-etapa" data-etapa="captado">
+        <span><b>${captados} negocio${captados === 1 ? "" : "s"} por investigar</b><small>Apuntados en Captados, sin investigar todavía</small></span>
+        <span class="fila-lado">${CHEVRON}</span></button>` : ""}
+    </section>` : "";
   app.innerHTML = `
     <header class="hoy-cab">
       <p class="kicker">${DIAS[dia]} ${ahora.getDate()} ${MESES[ahora.getMonth()]}</p>
@@ -344,7 +437,8 @@ function renderHoy() {
       <div class="hoy-meta"><span class="chip-semana">Semana ${par === 0 ? "A" : "B"}</span><span class="muted">${resumen}</span>${pendientes()}</div>
     </header>
     ${cuerpo}
-    ${vacio}`;
+    ${vacio}
+    ${tareasHtml}`;
 }
 
 function renderSemana() {
@@ -353,7 +447,9 @@ function renderSemana() {
   const actual = clave(l) === clave(lunesDe(new Date()));
   const hoy = actual ? diaDeHoy() : -1;
   const otra = par === 0 ? "B" : "A";
-  const negocios = st.prospectos.slice().sort(byNombre).map(p => {
+  // Para colocar solo sirven los que tienen algo que enseñar; también los ya colocados esta semana.
+  const colocable = p => ["investigado", "demo", "visitado", "propuesta"].indexOf(etapaDe(p)) >= 0 || plan.placements.some(x => x.prospectoId === p.id);
+  const negocios = st.prospectos.filter(colocable).sort(byNombre).map(p => {
     const n = plan.placements.filter(x => x.prospectoId === p.id).length;
     return `<button type="button" class="neg${st.seleccion === p.id ? " sel" : ""}${n ? " colocado" : ""}" draggable="true" data-neg="${esc(p.id)}" aria-pressed="${st.seleccion === p.id}">
       <b>${esc(p.nombre)}</b><small>${p.semana ? "" : '<span class="sin">sin horario</span> · '}${n ? n + " colocado" + (n > 1 ? "s" : "") : esc(p.zona)}</small>
@@ -430,39 +526,65 @@ function renderSemana() {
     <div class="board-wrap${unDia ? " un-dia" : ""}"><div class="board${unDia ? " dia-unico" : ""}">${tablero}</div></div>`;
 }
 
-const FILTROS = [["todos", "Todos"], ["pendiente", "Pendientes"], ["volver", "Volver"], ["visitado", "Visitados"], ["no_interesado", "No interesados"]];
-const filtroDe = p => p.resultado || "pendiente";
+// "Activos" es todo lo que aún se mueve: ni clientes cerrados ni descartados.
+const activo = p => etapaDe(p) !== "descartado" && etapaDe(p) !== "cliente";
+const enEtapa = (p, f) => f === "todos" || (f === "activos" ? activo(p) : etapaDe(p) === f);
 
 function renderNegocios() {
-  const cuenta = f => f === "todos" ? st.prospectos.length : st.prospectos.filter(p => filtroDe(p) === f).length;
-  const visitados = cuenta("visitado");
+  const n = f => st.prospectos.filter(p => enEtapa(p, f)).length;
+  const clientes = n("cliente");
+  const embudo = [["activos", "En marcha"], ...ETAPAS.map(e => [e[0], e[1]]), ["todos", "Todos"]]
+    .filter(([f]) => f === "activos" || f === "todos" || f === "captado" || f === "cliente" || n(f))
+    .map(([f, t]) => `<button type="button" class="paso${f === "activos" || f === "todos" ? " total" : ""}" data-accion="etapa-filtro" data-etapa="${f}" aria-pressed="${st.etapa === f}"><b>${n(f)}</b><small>${t}</small></button>`).join("");
   app.innerHTML = `
-    <div class="cabecera"><div><p class="kicker">${st.prospectos.length} negocios · ${visitados} visitado${visitados === 1 ? "" : "s"}</p><h1>Negocios</h1></div>${pendientes()}</div>
-    <input class="buscar" id="buscar" type="search" placeholder="Buscar por nombre, tipo o zona" value="${esc(st.busqueda)}" aria-label="Buscar negocio">
-    <div class="filtros" role="group" aria-label="Filtrar por resultado">${FILTROS.map(([f, t]) => {
-      const n = cuenta(f);
-      return f !== "todos" && !n ? "" : `<button type="button" class="filtro" data-accion="filtro" data-filtro="${f}" aria-pressed="${st.filtro === f}">${t} <span>${n}</span></button>`;
-    }).join("")}</div>
+    <div class="cabecera"><div><p class="kicker">${n("activos")} en marcha · ${clientes} cliente${clientes === 1 ? "" : "s"}</p><h1>Negocios</h1></div>${pendientes()}</div>
+    <input class="buscar" id="buscar" type="search" placeholder="Buscar: nombre, tipo, zona o nota" value="${esc(st.busqueda)}" aria-label="Buscar negocio">
+    <div class="embudo" role="group" aria-label="Filtrar por etapa">${embudo}</div>
+    <div class="filtros" id="filtros-cat" role="group" aria-label="Filtrar por categoría"></div>
     <div id="lista-negocios"></div>`;
   pintarListaNegocios();
 }
 
 function pintarListaNegocios() {
-  const q = st.busqueda.trim().toLowerCase();
-  const lista = st.prospectos.slice().sort(byNombre)
-    .filter(p => st.filtro === "todos" || filtroDe(p) === st.filtro)
-    .filter(p => !q || `${p.nombre} ${p.zona} ${p.tipo}`.toLowerCase().includes(q));
-  document.getElementById("lista-negocios").innerHTML = lista.map(p => {
-    const cuando = colocadoEstaSemana(p.id);
-    const lado = p.resultado
-      ? `<span class="chip ${p.resultado === "visitado" ? "ok" : p.resultado === "no_interesado" ? "no" : "aviso"}">${RES[p.resultado]}${p.resultado === "volver" && p.volverEl ? " · " + fechaCorta(p.volverEl) : ""}</span>`
-      : cuando ? `<span class="chip plan">${cuando}</span>` : '<span class="sin-colocar">Sin colocar</span>';
+  const q = plegar(st.busqueda.trim());
+  const texto = p => plegar([p.nombre, p.tipo, p.zona, p.direccion, etiquetaCategoria(categoriaDe(p)), p.nota, (p.motivos || []).join(" ")].join(" "));
+  const base = st.prospectos.filter(p => enEtapa(p, st.etapa) && (!q || texto(p).includes(q)));
+  // Las categorías cuentan sobre lo ya filtrado por etapa y búsqueda.
+  const nCat = c => base.filter(p => categoriaDe(p) === c).length;
+  if (st.categoria !== "todas" && !nCat(st.categoria)) st.categoria = "todas";
+  document.getElementById("filtros-cat").innerHTML = [["todas", "Todas"], ...CATEGORIAS]
+    .filter(([c]) => c === "todas" || nCat(c))
+    .map(([c, t]) => `<button type="button" class="filtro" data-accion="categoria" data-cat="${c}" aria-pressed="${st.categoria === c}">${t} <span>${c === "todas" ? base.length : nCat(c)}</span></button>`).join("");
+  const lista = base.filter(p => st.categoria === "todas" || categoriaDe(p) === st.categoria)
+    .sort((a, b) => rango(etapaDe(a)) - rango(etapaDe(b)) || byNombre(a, b));
+  const fila = (p, conEtapa) => {
+    const sig = siguienteDe(p), cuando = colocadoEstaSemana(p.id);
+    const vence = sig && sig.fecha && sig.fecha <= hoyISO();
+    const lado = sig
+      ? `<span class="chip ${vence ? "no" : "aviso"}">${esc(sig.txt)}${sig.fecha ? " · " + fechaCorta(sig.fecha) : ""}</span>`
+      : cuando ? `<span class="chip plan">${cuando}</span>`
+      : conEtapa ? `<span class="sin-colocar">${etiquetaEtapa(etapaDe(p))}</span>` : "";
+    const sub = [p.tipo || etiquetaCategoria(categoriaDe(p)), p.zona].filter(Boolean).map(esc).join(" · ");
     return `
     <a class="fila" href="#negocio/${esc(p.id)}">
-      <span><b>${esc(p.nombre)}</b><small>${esc(p.tipo)} · ${esc(p.zona)}${p.semana ? "" : ' · <span class="sin">sin horario</span>'}</small></span>
-      <span class="fila-lado">${lado}<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></span>
+      <span><b>${esc(p.nombre)}</b><small>${sub}</small></span>
+      <span class="fila-lado">${lado}${CHEVRON}</span>
     </a>`;
-  }).join("") || '<p class="vacio">Ningún negocio coincide.</p>';
+  };
+  const el = document.getElementById("lista-negocios");
+  if (!lista.length) {
+    el.innerHTML = q || st.etapa !== "captado"
+      ? '<p class="vacio">Ningún negocio coincide.</p>'
+      : '<div class="vacio"><p>No tienes negocios apuntados por investigar.</p><a class="boton" href="#captar">Apuntar uno</a></div>';
+    return;
+  }
+  // Sin búsqueda y viendo varias etapas, la lista se agrupa por etapa en el orden del embudo.
+  if (!q && (st.etapa === "activos" || st.etapa === "todos")) {
+    el.innerHTML = ETAPAS.map(([e, t, ayuda]) => {
+      const grupo = lista.filter(p => etapaDe(p) === e);
+      return grupo.length ? `<section class="grupo-docs"><h2 class="kicker">${t} <span>${grupo.length}</span><small>${ayuda}</small></h2>${grupo.map(p => fila(p, false)).join("")}</section>` : "";
+    }).join("");
+  } else el.innerHTML = lista.map(p => fila(p, st.etapa === "todos" || !!q)).join("");
 }
 
 function renderNegocio(id) {
@@ -486,36 +608,55 @@ function renderNegocio(id) {
   }).join("")}</table>` : "";
   const fuente = p.horarioVerificado === "google_maps" ? "Horario de Google Maps." : "";
   const pulsado = r => `aria-pressed="${p.resultado === r}"`;
+  const etapa = etapaDe(p), cat = categoriaDe(p), sig = siguienteDe(p);
+  const deVisita = !!p.demoUrl || rango(etapa) >= rango("demo");
+  const motivos = p.motivos || [];
   app.innerHTML = `
     <a class="atras" href="#negocios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>Negocios</a>
     <header class="ficha-cab">
-      <p class="kicker">${esc(p.tipo)} · ${esc(p.zona)}</p>
+      <p class="kicker">${[p.tipo || etiquetaCategoria(cat), p.zona].filter(Boolean).map(esc).join(" · ")}</p>
       <h1>${esc(p.nombre)}</h1>
-      <p><span class="chip ${ya.clase}">${ya.texto}</span></p>
+      ${p.semana ? `<p><span class="chip ${ya.clase}">${ya.texto}</span></p>` : ""}
     </header>
     <div class="ficha">
       <div class="acciones-ficha">
-        <a class="enlace-boton" href="${mapsUrl(p)}" target="_blank" rel="noopener">Cómo llegar</a>
+        <a class="enlace-boton" href="${esc(mapsUrl(p))}" target="_blank" rel="noopener">${p.direccion || !p.mapsLink ? "Cómo llegar" : "Abrir en Google Maps"}</a>
         ${tel ? `<a class="boton" href="tel:${esc(tel)}">Llamar</a>` : ""}
         ${p.demoUrl ? `<a class="boton" href="${esc(p.demoUrl)}" target="_blank" rel="noopener">Ver demo ↗</a>` : ""}
       </div>
-      <section class="panel">
+      <section class="panel seguimiento">
+        <h3>Etapa</h3>
+        <div class="filtros etapas" role="group" aria-label="Etapa">${ETAPAS.map(([e, t]) =>
+          `<button type="button" class="filtro" data-accion="etapa" data-etapa="${e}" data-id="${esc(id)}" aria-pressed="${etapa === e}">${t}</button>`).join("")}</div>
+        <p class="muted pequeno">${(ETAPAS.find(x => x[0] === etapa) || [])[2] || ""}${p.captadoEl ? ` · apuntado el ${fechaCorta(p.captadoEl)}` : ""}</p>
+        <div class="paso-siguiente">
+          <label>Siguiente paso<input type="text" data-paso="${esc(id)}" value="${esc(sig ? sig.txt : "")}" placeholder="Investigar, hacer la demo, llamar…" enterkeyhint="done"></label>
+          <label>Cuándo<input type="date" data-pasofecha="${esc(id)}" value="${sig && sig.fecha ? sig.fecha : ""}"></label>
+        </div>
+        ${sig ? `<button type="button" class="enlace" data-accion="paso-hecho" data-id="${esc(id)}">Hecho: quitar el siguiente paso</button>` : ""}
+      </section>
+      ${p.semana || p.horario ? `<section class="panel">
         <h3>Horario</h3>
         ${tabla || `<p><span class="sin">Sin horario verificado.</span> ${esc(p.horario)}</p>`}
-        <p class="ventana"><b>Mejor momento para ir</b>${esc(p.ventanaVisita)}</p>
+        ${p.ventanaVisita ? `<p class="ventana"><b>Mejor momento para ir</b>${esc(p.ventanaVisita)}</p>` : ""}
         <p class="muted pequeno">${esc(p.direccion || "")}${p.direccion && fuente ? " · " : ""}${fuente}</p>
-      </section>
-      <section class="panel">
+      </section>` : ""}
+      ${p.argumento ? `<section class="panel">
         <h3>Argumento</h3>
         <p class="arg">${esc(p.argumento)}</p>
         ${p.demoUrl ? "" : '<p class="muted pequeno">Sin demo publicada todavía.</p>'}
-      </section>
+      </section>` : ""}
+      ${motivos.length || etapa === "captado" ? `<section class="panel">
+        <h3>Por qué lo apuntaste</h3>
+        ${motivos.length ? `<p class="motivos">${motivos.map(m => `<span class="chip">${esc(m)}</span>`).join("")}</p>` : ""}
+        ${etapa === "captado" ? '<p class="muted pequeno">Para investigarlo, en el ordenador pídele a Claude «investiga los captados»: buscará web, reseñas, horario y redes, y rellenará esta ficha.</p>' : ""}
+      </section>` : ""}
       ${p.guion || dossier ? `<section class="panel preparar">
         <h3>Preparar la visita</h3>
         ${p.guion ? `<p class="guion">${esc(p.guion)}</p>` : ""}
         ${dossier ? `<a class="boton dossier" href="#doc/${esc(dossier.id)}"><span><b>Estudiar el dossier completo</b><small>Guion, objeciones y qué no decir</small></span>${CHEVRON}</a>` : ""}
       </section>` : ""}
-      <section class="panel">
+      ${deVisita ? `<section class="panel">
         <h3>En la visita <span class="progreso">${hechos}/${CHECK.length}</span></h3>
         <ul class="checks">${CHECK.map((t, i) => `<li><label><input type="checkbox" data-check="${i}" data-id="${esc(id)}" ${marcas[i] ? "checked" : ""}> ${t}</label></li>`).join("")}</ul>
       </section>
@@ -532,8 +673,93 @@ function renderNegocio(id) {
         </label>
         <p class="estado-resultado"><span class="muted">${esc(estadoTxt)}</span>${p.resultado ? `<button type="button" class="enlace" data-accion="deshacer" data-id="${esc(id)}">Quitar resultado</button>` : ""}</p>
       </section>
-      ${p.guion || dossier ? "" : '<p class="muted pequeno nota-guion">Guion pendiente: se escribirá a partir de la demo y de los datos verificados.</p>'}
+      ${p.guion || dossier ? "" : '<p class="muted pequeno nota-guion">Guion pendiente: se escribirá a partir de la demo y de los datos verificados.</p>'}` : `<section class="panel">
+        <label class="nota">Nota
+          <textarea data-nota="${esc(id)}" placeholder="Qué te llamó la atención, a quién conoces allí…">${esc(nota)}</textarea>
+        </label>
+      </section>`}
+      <details class="panel editar">
+        <summary>Editar datos</summary>
+        <label>Nombre<input type="text" data-campo="nombre" data-id="${esc(id)}" value="${esc(p.nombre)}"></label>
+        <label>Categoría<select data-campo="categoria" data-id="${esc(id)}">${CATEGORIAS.map(([c, t]) => `<option value="${c}"${c === cat ? " selected" : ""}>${t}</option>`).join("")}</select></label>
+        <label>Tipo<input type="text" data-campo="tipo" data-id="${esc(id)}" value="${esc(p.tipo || "")}" placeholder="Hamburguesería, taller de motos…"></label>
+        <label>Zona<input type="text" data-campo="zona" data-id="${esc(id)}" value="${esc(p.zona || "")}" list="zonas"></label>
+        <label>Dirección<input type="text" data-campo="direccion" data-id="${esc(id)}" value="${esc(p.direccion || "")}"></label>
+        <label>Teléfono<input type="tel" data-campo="telefono" data-id="${esc(id)}" value="${esc(p.telefono || "")}"></label>
+        <label>Enlace de Google Maps<input type="url" data-campo="mapsLink" data-id="${esc(id)}" value="${esc(p.mapsLink || "")}"></label>
+        <datalist id="zonas">${ZONAS.map(z => `<option value="${esc(z)}">`).join("")}</datalist>
+        ${etapa === "captado" || etapa === "descartado" ? `<button type="button" class="enlace peligro" data-accion="borrar" data-id="${esc(id)}">Borrar este negocio</button>` : ""}
+      </details>
     </div>`;
+}
+
+// ---------- Apuntar un negocio (a mano o compartido desde Google Maps) ----------
+
+// Google Maps comparte el nombre, a veces la dirección, y el enlace corto en líneas separadas.
+function leerCompartido(titulo, texto, url) {
+  const todo = [titulo, texto, url].filter(Boolean).join("\n");
+  const enlace = urlDe(url) || urlDe(todo);
+  const lineas = todo.split(/\n+/).map(l => l.trim()).filter(l => l && !/https?:\/\//.test(l));
+  const nombre = (titulo && !/https?:\/\//.test(titulo) ? titulo.trim() : lineas[0]) || "";
+  const direccion = lineas.find(l => l !== nombre && /\d|,/.test(l)) || "";
+  const zona = ZONAS.find(z => plegar(direccion).includes(plegar(z))) || "";
+  return { nombre, direccion, zona, mapsLink: enlace };
+}
+
+function renderCaptar() {
+  // Si la vista se repinta (llegan datos, vuelve la conexión) no se borra lo que ya está escrito.
+  if (document.getElementById("form-captar")) return;
+  const c = st.compartido || {};
+  st.compartido = null;
+  app.innerHTML = `
+    <a class="atras" href="#negocios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>Negocios</a>
+    <header class="ficha-cab">
+      <p class="kicker">Nuevo candidato</p>
+      <h1>Apuntar negocio</h1>
+      <p class="muted">En Google Maps: <b>Compartir → Visitas</b>, o copia el enlace y pégalo aquí. Lo demás se investiga después.</p>
+    </header>
+    <form class="ficha captar" id="form-captar" novalidate>
+      <section class="panel">
+        <label>Enlace de Google Maps<input type="text" name="maps" id="captar-maps" inputmode="url" autocomplete="off" placeholder="https://maps.app.goo.gl/…" value="${esc(c.mapsLink || "")}"></label>
+        <label>Nombre<input type="text" name="nombre" id="captar-nombre" required autocomplete="off" value="${esc(c.nombre || "")}" placeholder="Cómo se llama"></label>
+        <fieldset><legend>Categoría</legend><div class="opciones">${CATEGORIAS.map(([v, t]) =>
+          `<label class="filtro"><input type="radio" name="categoria" value="${v}">${t}</label>`).join("")}</div></fieldset>
+        <label>Tipo<input type="text" name="tipo" id="captar-tipo" placeholder="Opcional: hamburguesería, taller…" autocomplete="off"></label>
+        <label>Zona<input type="text" name="zona" list="zonas-captar" value="${esc(c.zona || "Dénia")}"></label>
+        <datalist id="zonas-captar">${ZONAS.map(z => `<option value="${esc(z)}">`).join("")}</datalist>
+        <input type="hidden" name="direccion" value="${esc(c.direccion || "")}">
+      </section>
+      <section class="panel">
+        <fieldset><legend>Por qué es buen candidato</legend><div class="opciones">${MOTIVOS.map(m =>
+          `<label class="filtro"><input type="checkbox" name="motivo" value="${esc(m)}">${esc(m)}</label>`).join("")}</div></fieldset>
+        <label class="nota">Nota<textarea name="nota" placeholder="Qué te llamó la atención"></textarea></label>
+      </section>
+      <button type="submit" class="enlace-boton">Guardar en Captados</button>
+    </form>`;
+  const nombre = document.getElementById("captar-nombre");
+  if (!nombre.value) (c.mapsLink ? nombre : document.getElementById("captar-maps")).focus();
+}
+
+function guardarCaptado(form) {
+  const f = new FormData(form);
+  const nombre = String(f.get("nombre") || "").trim();
+  if (!nombre) { aviso("Falta el nombre del negocio."); document.getElementById("captar-nombre").focus(); return; }
+  const tipo = String(f.get("tipo") || "").trim();
+  const datos = {
+    nombre, tipo,
+    categoria: f.get("categoria") || adivinarCategoria(`${tipo} ${nombre}`),
+    zona: String(f.get("zona") || "").trim(),
+    mapsLink: urlDe(f.get("maps")),
+    motivos: f.getAll("motivo"),
+    nota: String(f.get("nota") || "").trim(),
+    siguientePaso: "Investigar"
+  };
+  const dir = String(f.get("direccion") || "").trim();
+  if (dir) datos.direccion = dir;
+  const p = crearProspecto(datos);
+  st.etapa = "captado";
+  aviso(`${p.nombre} apuntado en Captados.`);
+  location.hash = "#negocio/" + p.id;
 }
 
 // ---------- Manual: método común y dossier de cada negocio ----------
@@ -730,6 +956,32 @@ app.addEventListener("change", e => {
     aviso("Nota guardada.");
   }
   if (t.matches("[data-fecha]")) st.fechas.set(t.dataset.fecha, t.value);
+  // Chips de categoría y motivos: se marcan con clase para navegadores sin :has().
+  if (t.closest(".opciones")) Array.prototype.forEach.call(t.form.querySelectorAll(`input[name="${t.name}"]`), i => i.parentNode.classList.toggle("marcado", i.checked));
+  if (t.matches("[data-paso], [data-pasofecha]")) {
+    const id = t.dataset.paso || t.dataset.pasofecha, p = prospecto(id);
+    if (!p) return;
+    const sig = siguienteDe(p) || {};
+    const txt = t.matches("[data-paso]") ? t.value.trim() : (sig.txt || "");
+    const fecha = t.matches("[data-pasofecha]") ? t.value : (sig.fecha || "");
+    actualizarProspecto(id, { siguientePaso: txt || (fecha ? "Siguiente paso" : null), siguienteFecha: fecha || null, ...(p.resultado === "volver" ? { volverEl: fecha || null } : {}) });
+    aviso(txt || fecha ? "Siguiente paso guardado." : "Siguiente paso quitado.");
+    render();
+  }
+  if (t.matches("[data-campo]")) {
+    const p = prospecto(t.dataset.id), campo = t.dataset.campo;
+    const v = t.value.trim();
+    if (!p || (p[campo] || "") === v) return;
+    if (campo === "nombre" && !v) { t.value = p.nombre; return aviso("El nombre no puede quedar vacío."); }
+    actualizarProspecto(p.id, { [campo]: campo === "mapsLink" ? urlDe(v) : v });
+    aviso("Guardado.");
+  }
+});
+
+app.addEventListener("submit", e => {
+  if (e.target.id !== "form-captar") return;
+  e.preventDefault();
+  guardarCaptado(e.target);
 });
 
 app.addEventListener("input", e => {
@@ -737,6 +989,15 @@ app.addEventListener("input", e => {
   if (t.matches("[data-nota]")) st.notas.set(t.dataset.nota, t.value);
   if (t.id === "buscar") { st.busqueda = t.value; pintarListaNegocios(); }
   if (t.id === "buscar-doc") { st.busquedaDoc = t.value; pintarListaDocs(); }
+  // Si se pega el texto entero que comparte Maps, se separan el enlace y el nombre.
+  if (t.id === "captar-maps" && /\S\s+https?:|https?:\S+\s+\S/.test(t.value)) {
+    const c = leerCompartido("", t.value, "");
+    t.value = c.mapsLink;
+    const n = document.getElementById("captar-nombre");
+    if (n && !n.value && c.nombre) n.value = c.nombre;
+    const dir = t.form && t.form.elements.direccion;
+    if (dir && !dir.value) dir.value = c.direccion;
+  }
 });
 
 app.addEventListener("dragstart", e => {
@@ -768,7 +1029,9 @@ async function accion(b) {
   }
   if (a === "dia") { st.diaSel = +b.dataset.dia; return render(); }
   if (a === "cancelar-sel") { st.seleccion = null; return render(); }
-  if (a === "filtro") { st.filtro = b.dataset.filtro; return render(); }
+  if (a === "etapa-filtro") { st.etapa = b.dataset.etapa; st.categoria = "todas"; return render(); }
+  if (a === "categoria") { st.categoria = b.dataset.cat; return pintarListaNegocios(); }
+  if (a === "ver-etapa") { st.etapa = b.dataset.etapa; st.categoria = "todas"; st.busqueda = ""; location.hash = "#negocios"; return; }
   if (a === "desplegar") {
     const secciones = app.querySelectorAll("details.seccion");
     const abrir = Array.prototype.some.call(secciones, s => !s.open);
@@ -793,13 +1056,36 @@ async function accion(b) {
     const f = st.fechas.get(id);
     if (!f) return aviso("Elige una fecha para volver.");
     st.volver.delete(id);
-    actualizarProspecto(id, { resultado: "volver", volverEl: f, nota });
+    actualizarProspecto(id, { resultado: "volver", volverEl: f, siguientePaso: "Volver a visitar", siguienteFecha: f, nota });
     aviso("Guardado. Volver el " + fechaCorta(f) + ".");
     return render();
   }
-  if (a === "visitado") { st.volver.delete(id); actualizarProspecto(id, { resultado: "visitado", ultimaVisita: hoyISO(), volverEl: null, nota }); aviso("Visita registrada."); }
-  if (a === "no") { st.volver.delete(id); actualizarProspecto(id, { resultado: "no_interesado", nota }); aviso("Marcado como no interesado."); }
-  if (a === "deshacer") { actualizarProspecto(id, { resultado: null, ultimaVisita: null, volverEl: null }); aviso("Resultado quitado."); }
+  // El resultado de la visita mueve la etapa, sin retroceder si ya iba más adelante.
+  const etapa = etapaDe(p);
+  const limpiarVolver = p.siguientePaso === "Volver a visitar" ? { siguientePaso: null, siguienteFecha: null } : {};
+  if (a === "visitado") {
+    st.volver.delete(id);
+    actualizarProspecto(id, { resultado: "visitado", ultimaVisita: hoyISO(), volverEl: null, nota, ...limpiarVolver, etapa: rango(etapa) < rango("visitado") ? "visitado" : etapa });
+    aviso("Visita registrada.");
+  }
+  if (a === "no") { st.volver.delete(id); actualizarProspecto(id, { resultado: "no_interesado", nota, ...limpiarVolver, etapa: "descartado" }); aviso("Marcado como no interesado: pasa a Descartados."); }
+  if (a === "deshacer") {
+    const vuelve = etapa === "visitado" || etapa === "descartado" ? (p.demoUrl ? "demo" : "investigado") : etapa;
+    actualizarProspecto(id, { resultado: null, ultimaVisita: null, volverEl: null, ...limpiarVolver, etapa: vuelve });
+    aviso("Resultado quitado.");
+  }
+  if (a === "etapa") {
+    actualizarProspecto(id, { etapa: b.dataset.etapa });
+    aviso(`${p.nombre}: ${etiquetaEtapa(b.dataset.etapa)}.`);
+  }
+  if (a === "paso-hecho") { actualizarProspecto(id, { siguientePaso: null, siguienteFecha: null, volverEl: null }); aviso("Paso hecho."); }
+  if (a === "borrar") {
+    if (!confirm(`¿Borrar ${p.nombre}? No se puede deshacer.`)) return;
+    borrarProspecto(id);
+    aviso(`${p.nombre} borrado.`);
+    location.hash = "#negocios";
+    return;
+  }
   render();
 }
 
@@ -815,6 +1101,12 @@ async function enviarEnlace() {
 
 async function arrancar() {
   cargarCache();
+  // Al compartir desde Google Maps (Android) la app se abre con ?title=&text=&url=.
+  const q = new URLSearchParams(location.search);
+  if (q.has("title") || q.has("text") || q.has("url")) {
+    st.compartido = leerCompartido(q.get("title"), q.get("text"), q.get("url"));
+    history.replaceState(null, "", location.pathname + "#captar");
+  }
   const { data } = await sb.auth.getSession();
   st.sesion = data.session;
   if (st.sesion && st.sesion.user.email !== EMAIL_PROPIETARIO) {
